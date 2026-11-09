@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: barberqueue
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run typecheck && npm run build
+    startCommand: npm run start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: 22.12.0
+      - key: NEXT_PUBLIC_SUPABASE_URL
+        sync: false
+      - key: NEXT_PUBLIC_SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: NEXT_PUBLIC_DEFAULT_SHOP_ID
+        sync: false
+      - key: NEXT_PUBLIC_DEFAULT_COUNTRY_CODE
+        value: "1"
+      - key: ADMIN_PIN
+        sync: false
