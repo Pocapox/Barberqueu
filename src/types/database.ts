@@ -36,6 +36,12 @@ export type WhatsAppSession = {
   updated_at: string;
 };
 
+export type WhatsAppOutbox = {
+  id: string; shop_id: string; entry_id: string; kind: "welcome" | "chair" | "progress" | "upcoming";
+  phone: string; body: string; status: "pending" | "sending" | "sent" | "superseded";
+  attempts: number; next_attempt_at: string; leased_until: string | null; sent_at: string | null; created_at: string;
+};
+
 export type BarberAccount = {
   shop_id: string;
   name: string;
@@ -81,6 +87,12 @@ export type Database = {
           referencedColumns: ["id"];
         }];
       };
+      whatsapp_outbox: {
+        Row: WhatsAppOutbox;
+        Insert: Pick<WhatsAppOutbox, "shop_id" | "entry_id" | "kind" | "phone" | "body"> & Partial<Omit<WhatsAppOutbox, "shop_id" | "entry_id" | "kind" | "phone" | "body">>;
+        Update: Partial<WhatsAppOutbox>;
+        Relationships: [];
+      };
       barber_accounts: {
         Row: BarberAccount;
         Insert: Pick<BarberAccount, "shop_id" | "name" | "pin_hash" | "pin_fingerprint"> & Partial<Pick<BarberAccount, "created_at">>;
@@ -100,6 +112,8 @@ export type Database = {
       update_barber_account: { Args: { p_shop: string; p_name: string; p_pin_hash: string | null; p_pin_fingerprint: string | null }; Returns: { id: string; name: string } };
       archive_barber_account: { Args: { p_shop: string; p_primary_shop: string }; Returns: undefined };
       cancel_queue_phone_details: { Args: { p_phone: string }; Returns: string[] };
+      claim_whatsapp_outbox: { Args: { p_limit?: number }; Returns: WhatsAppOutbox[] };
+      finish_whatsapp_outbox: { Args: { p_id: string; p_success: boolean }; Returns: undefined };
     };
     Enums: { [_ in never]: never };
     CompositeTypes: { [_ in never]: never };

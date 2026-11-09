@@ -46,7 +46,8 @@ export default function PublicPage() {
       const turn = { id: data.id, token: data.token, shopId }; setOwn(turn);
       try { localStorage.setItem(storageKey, JSON.stringify(turn)); }
       catch { setMessage("Turno registrado. Mantén esta pestaña abierta: el navegador no permite guardarlo."); }
-      if (!data.whatsappDelivered) setMessage("Tu turno está registrado. Sigue esta página: WhatsApp no está disponible ahora.");
+      if (data.whatsappQueued) setMessage("Tu turno está registrado. El aviso de WhatsApp quedó pendiente y se enviará cuando haya conexión.");
+      else if (!data.whatsappDelivered) setMessage("Tu turno está registrado. Sigue esta página: WhatsApp no está disponible ahora.");
       form.reset(); await refresh();
     } catch (e) { setMessage(e instanceof Error ? e.message : "No se pudo tomar turno."); }
     finally { setBusy(false); }

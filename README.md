@@ -23,6 +23,10 @@ operaciones y en el acceso al QR.
    aplica únicamente 003. Las dos primeras migraciones requieren un proyecto nuevo;
    no las vuelvas a aplicar sobre tablas ya creadas. La tercera repara permisos y
    políticas ausentes y se puede repetir.
+   Para una instalación ya existente, aplica también
+   `supabase/migrations/008_whatsapp_outbox.sql` una sola vez antes de ejecutar
+   esta versión del servidor. Las migraciones 004–007 corresponden a las cuentas
+   de barberos y deben estar aplicadas previamente.
 5. Ejecuta `npm run dev` y abre `http://localhost:3000`.
 6. En `/admin`, introduce tu PIN y escanea el QR desde Dispositivos vinculados en
    WhatsApp. La aplicación guarda credenciales y llaves en `whatsapp_sessions`.
@@ -88,9 +92,13 @@ de cancelación se guardan en localStorage según los requisitos de la vista pú
 - El avance incluye los IDs que el barbero estaba viendo. Si la fila cambió,
   responde 409 en lugar de avanzar dos turnos por una pulsación repetida.
 - Las banderas notified_turn/notified_upcoming se guardan al enviar correctamente.
-- Si WhatsApp falla, la operación de fila permanece confirmada y el barbero ve la
-  advertencia para avisar manualmente. No hay outbox durable ni reenvío automático
-  de mensajes pendientes tras reiniciar el proceso.
+- Los avisos de inscripción y avance se guardan en `whatsapp_outbox` en la misma
+  transacción que modifica la fila. Un proceso del servidor reintenta los pendientes
+  cada 5 segundos cuando WhatsApp está conectado. Los avisos de progreso anteriores
+  se sustituyen por el estado más reciente. Si el proceso cae después de que WhatsApp
+  acepte un mensaje y antes de registrar el resultado, puede enviarse dos veces.
+  WhatsApp acepta el envío sin garantizar lectura o entrega al teléfono. La
+  confirmación de entrega final no se registra actualmente.
 - No-Show del turno actual avanza la fila. No-Show de un cliente esperando solo
   retira ese turno. Cancelar desde web requiere su token privado; CANCELAR por
   WhatsApp solo retira turnos waiting del número remitente.

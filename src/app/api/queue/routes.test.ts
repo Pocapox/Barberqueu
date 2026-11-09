@@ -1,7 +1,8 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ rpc: vi.fn(), send: vi.fn(), update: vi.fn(), eq: vi.fn(), select: vi.fn(), filterEq: vi.fn(), order: vi.fn(), single: vi.fn() }));
+const mocks = vi.hoisted(() => ({ rpc: vi.fn(), drain: vi.fn(), update: vi.fn(), eq: vi.fn(), select: vi.fn(), filterEq: vi.fn(), order: vi.fn(), single: vi.fn() }));
 vi.mock("../../../lib/supabase-admin", () => ({ getSupabaseAdmin: () => ({ rpc: mocks.rpc, from: () => ({ update: mocks.update, select: mocks.select }) }) }));
-vi.mock("../../../lib/whatsapp-client", () => ({ defaultShopId: () => "00000000-0000-0000-0000-000000000001", sendWhatsApp: mocks.send }));
+vi.mock("../../../lib/whatsapp-client", () => ({ defaultShopId: () => "00000000-0000-0000-0000-000000000001", whatsappStatus: () => ({ status: "connected" }) }));
+vi.mock("../../../lib/whatsapp-outbox", () => ({ drainWhatsAppOutbox: mocks.drain }));
 import { POST as join } from "./join/route";
 import { POST as advance } from "./advance/route";
 import { POST as status } from "./status/route";
@@ -12,7 +13,7 @@ function request(data: unknown, pin = "correct-test-pin") {
 }
 beforeEach(() => {
   vi.clearAllMocks(); vi.stubEnv("ADMIN_PIN", "correct-test-pin");
-  mocks.send.mockResolvedValue(true); mocks.eq.mockResolvedValue({ error: null });
+  mocks.drain.mockResolvedValue(1); mocks.eq.mockResolvedValue({ error: null });
   mocks.update.mockReturnValue({ eq: mocks.eq });
   mocks.select.mockReturnValue({ eq: mocks.filterEq });
   mocks.filterEq.mockReturnValue({ eq: mocks.filterEq, order: mocks.order, single: mocks.single });
@@ -26,16 +27,15 @@ describe("queue route contracts", () => {
     const response = await join(request({ name: "Ana", phone: "(809) 555-1234" }));
     const result = await response.json();
     expect(response.status).toBe(201);
-    expect(result).toEqual({ id, shopId: id, token: expect.stringMatching(/^[a-f0-9]{64}$/), whatsappDelivered: true });
+    expect(result).toEqual({ id, shopId: id, token: expect.stringMatching(/^[a-f0-9]{64}$/), whatsappDelivered: false, whatsappQueued: true });
     expect(mocks.rpc.mock.calls[0][1].p_phone).toBe("18095551234");
     expect(mocks.rpc.mock.calls[0][1].p_token_hash).not.toBe(result.token);
-    expect(mocks.send).toHaveBeenCalledWith("18095551234", expect.stringContaining("María"));
-    expect(mocks.send.mock.calls[0][1]).not.toContain("BarberQueue");
+    expect(mocks.drain).toHaveBeenCalledOnce();
   });
   it("maps duplicate turns to HTTP 409 and sends no notification", async () => {
     mocks.rpc.mockResolvedValue({ data: null, error: { code: "23505" } });
     expect((await join(request({ name: "Ana", phone: "18295551234" }))).status).toBe(409);
-    expect(mocks.send).not.toHaveBeenCalled();
+    expect(mocks.drain).not.toHaveBeenCalled();
   });
   it("rejects malformed phones without touching the database", async () => {
     expect((await join(request({ name: "Ana", phone: "bad" }))).status).toBe(400);
@@ -53,14 +53,10 @@ describe("queue route contracts", () => {
     ], error: null });
     const response = await advance(request({ servingId: null, waitingId: id }));
     expect(response.status).toBe(200);
-    expect(mocks.send).toHaveBeenNthCalledWith(1, "18095551234", expect.stringContaining("sillón"));
-    expect(mocks.send).toHaveBeenNthCalledWith(2, "18295551234", expect.stringContaining("casi es tu turno"));
-    expect(mocks.send).toHaveBeenNthCalledWith(3, "18495551234", expect.stringContaining("casi es tu turno"));
-    expect(mocks.send.mock.calls.every(call => call[1].includes("María"))).toBe(true);
-    expect(mocks.update).toHaveBeenCalledWith({ notified_upcoming: true });
+    expect(mocks.drain).toHaveBeenCalledOnce();
   });
   it("reports delivery failures without rolling back the completed advance", async () => {
-    mocks.send.mockResolvedValue(false);
+    mocks.drain.mockRejectedValueOnce(new Error("offline"));
     mocks.rpc.mockResolvedValue({ data: { serving: { id, customer_name: "Ana", customer_phone: "18095551234" }, upcoming: null }, error: null });
     const response = await advance(request({ servingId: null, waitingId: id }));
     expect(response.status).toBe(200);
@@ -78,11 +74,7 @@ describe("queue route contracts", () => {
     ], error: null });
     const response = await advance(request({ servingId: "00000000-0000-0000-0000-000000000002", waitingId: id, finish: "completed" }));
     expect(response.status).toBe(200);
-    expect(mocks.send).toHaveBeenCalledTimes(3);
-    expect(mocks.send).toHaveBeenNthCalledWith(1, "18095551234", expect.stringContaining("sillón"));
-    expect(mocks.send).toHaveBeenNthCalledWith(2, "18295551234", expect.stringContaining("1 persona antes de ti"));
-    expect(mocks.send).toHaveBeenNthCalledWith(3, "18495551234", expect.stringContaining("2 personas antes de ti"));
-    expect(mocks.update).toHaveBeenCalledWith({ notified_upcoming: true });
+    expect(mocks.drain).toHaveBeenCalledOnce();
   });
   it("requires the admin PIN and validates the barber's estimated minutes", async () => {
     expect((await status(request({ action: "duration", minutes: 30 }, "wrong"))).status).toBe(401);

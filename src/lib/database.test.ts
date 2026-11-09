@@ -35,18 +35,36 @@ beforeAll(async () => {
   await db.exec(await readFile("supabase/migrations/005_global_active_phone.sql", "utf8"));
   await db.exec(await readFile("supabase/migrations/006_claim_primary_barber.sql", "utf8"));
   await db.exec(await readFile("supabase/migrations/007_manage_barbers.sql", "utf8"));
+  await db.exec(await readFile("supabase/migrations/008_whatsapp_outbox.sql", "utf8"));
   await db.exec(`INSERT INTO public.shops (id,slug,name,barber_name)
     VALUES ('${otherShop}', 'otra', 'Otra', 'Otro')`);
 }, 30000);
 
 beforeEach(async () => {
-  await db.exec("TRUNCATE public.queue_entries, public.whatsapp_sessions RESTART IDENTITY");
+  await db.exec("TRUNCATE public.queue_entries, public.whatsapp_sessions, public.whatsapp_outbox RESTART IDENTITY");
   await db.exec(`DELETE FROM public.barber_accounts;
     DELETE FROM public.shops WHERE id NOT IN ('${shop}', '${otherShop}');
     UPDATE public.shops SET barber_name='Barbero Principal', is_open=true, archived_at=NULL WHERE id='${shop}';`);
 });
 
 afterAll(async () => { await db?.close(); });
+
+describe("durable WhatsApp outbox", () => {
+  it("queues welcome and progress atomically, then claims and marks delivery", async () => {
+    const first = (await db.query<{ data: { id: string } }>("SELECT join_queue($1,$2,$3,$4) AS data", [shop,"Ana","18095551234","a".repeat(64)])).rows[0].data.id;
+    const second = (await db.query<{ data: { id: string } }>("SELECT join_queue($1,$2,$3,$4) AS data", [shop,"Luis","18295551234","b".repeat(64)])).rows[0].data.id;
+    expect((await db.query<{ count: number }>("SELECT count(*)::int AS count FROM whatsapp_outbox")).rows[0].count).toBe(2);
+    await db.query("SELECT advance_queue($1,$2,$3,$4)", [shop,null,first,"completed"]);
+    const pending = await db.query<{ id: string; kind: string; body: string }>("SELECT id,kind,body FROM whatsapp_outbox WHERE status='pending'");
+    expect(pending.rows.some(row => row.kind === "chair" && row.body.includes("Barbero Principal"))).toBe(true);
+    expect(pending.rows.some(row => row.kind === "upcoming" && row.body.includes("Luis"))).toBe(true);
+    const claimed = await db.query<{ id: string }>("SELECT id FROM claim_whatsapp_outbox(10)");
+    expect(claimed.rows.length).toBe(2);
+    for (const row of claimed.rows) await db.query("SELECT finish_whatsapp_outbox($1,true)", [row.id]);
+    expect((await db.query<{ notified_turn: boolean }>("SELECT notified_turn FROM queue_entries WHERE id=$1", [first])).rows[0].notified_turn).toBe(true);
+    expect((await db.query<{ notified_upcoming: boolean }>("SELECT notified_upcoming FROM queue_entries WHERE id=$1", [second])).rows[0].notified_upcoming).toBe(true);
+  });
+});
 
 describe("active queue constraints", () => {
   it.each(["waiting", "serving"])("rejects duplicate active phone when existing is %s", async (status) => {
