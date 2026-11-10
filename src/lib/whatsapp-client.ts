@@ -147,3 +147,17 @@ export async function stopWhatsApp() {
   await s.flush?.();
   s.status = "disconnected"; s.qr = null;
 }
+
+let resetting: Promise<void> | undefined;
+export function resetWhatsApp(): Promise<void> {
+  if (resetting) return resetting;
+  resetting = (async () => {
+    await stopWhatsApp();
+    const result = await getSupabaseAdmin().from("whatsapp_sessions").delete().eq("shop_id", defaultShopId());
+    if (result.error) throw new Error("No se pudo borrar la sesión anterior de WhatsApp.");
+    const s = state();
+    s.stopped = false; s.attempts = 0; s.flush = undefined;
+    await startWhatsApp();
+  })().finally(() => { resetting = undefined; });
+  return resetting;
+}
