@@ -7,13 +7,12 @@ let draining: Promise<number> | undefined;
 export function drainWhatsAppOutbox(): Promise<number> {
   if (draining) return draining;
   draining = (async () => {
-    if (whatsappStatus().status !== "connected") return 0;
     const db = getSupabaseAdmin();
     const { data, error } = await db.rpc("claim_whatsapp_outbox", { p_limit: 10 });
     if (error) throw error;
     let sentCount = 0;
     for (const item of data ?? []) {
-      const sent = await sendWhatsApp(item.phone, item.body);
+      const sent = whatsappStatus(item.shop_id).status === "connected" && await sendWhatsApp(item.shop_id, item.phone, item.body);
       const result = await db.rpc("finish_whatsapp_outbox", { p_id: item.id, p_success: sent });
       if (result.error) throw result.error;
       if (sent) sentCount++;

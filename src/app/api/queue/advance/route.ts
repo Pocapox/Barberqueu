@@ -17,7 +17,7 @@ export async function POST(request: Request) {
     });
     if (error) throw error;
     const warnings: string[] = [];
-    if (whatsappStatus().status !== "connected") warnings.push("WhatsApp está desconectado. Los avisos quedaron pendientes y se reintentará enviarlos.");
+    if (whatsappStatus(shopId).status !== "connected") warnings.push("WhatsApp está desconectado. Los avisos quedaron pendientes y se reintentará enviarlos.");
     try { await drainWhatsAppOutbox(); }
     catch { warnings.push("Los avisos quedaron pendientes para reintento."); }
     return json({ ok: true, warnings });

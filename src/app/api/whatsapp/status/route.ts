@@ -4,9 +4,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export async function GET(request: Request) {
   try {
-    const { owner } = await requireManager(request);
-    void startWhatsApp();
-    const status = whatsappStatus();
-    return json(owner ? status : { status: status.status, qr: null });
+    const { shopId } = await requireManager(request);
+    void startWhatsApp(shopId);
+    return json(whatsappStatus(shopId));
   } catch (error) { return handleError(error); }
 }

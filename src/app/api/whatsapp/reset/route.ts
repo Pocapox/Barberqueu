@@ -1,11 +1,11 @@
 import { resetWhatsApp, whatsappStatus } from "@/lib/whatsapp-client";
-import { handleError, json, requireAdmin } from "../../_shared";
+import { handleError, json, requireManager } from "../../_shared";
 
 export const runtime = "nodejs";
 export async function POST(request: Request) {
   try {
-    requireAdmin(request);
-    await resetWhatsApp();
-    return json(whatsappStatus());
+    const { shopId } = await requireManager(request);
+    await resetWhatsApp(shopId);
+    return json(whatsappStatus(shopId));
   } catch (error) { return handleError(error); }
 }
