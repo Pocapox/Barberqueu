@@ -4,7 +4,7 @@ const mocks = vi.hoisted(() => {
   const socket = { ev: { on: vi.fn((name: string, callback: (event: unknown) => void) => listeners.set(name, callback)), removeAllListeners: vi.fn((name: string) => listeners.delete(name)) }, end: vi.fn(), sendMessage: vi.fn() };
   return { listeners, socket, factory: vi.fn(() => socket), rpc: vi.fn(), flush: vi.fn(), save: vi.fn() };
 });
-vi.mock("./baileys", () => ({ makeWASocket: mocks.factory, fetchLatestWaWebVersion: async () => ({ isLatest: true, version: [2, 3000, 1053729251] }), DisconnectReason: { loggedOut: 401, badSession: 500, connectionReplaced: 440 } }));
+vi.mock("./baileys", () => ({ makeWASocket: mocks.factory, normalizeMessageContent: (value: { ephemeralMessage?: { message: unknown } } | undefined) => value?.ephemeralMessage?.message ?? value, fetchLatestWaWebVersion: async () => ({ isLatest: true, version: [2, 3000, 1053729251] }), DisconnectReason: { loggedOut: 401, badSession: 500, connectionReplaced: 440 } }));
 vi.mock("./whatsapp-auth", () => ({ useSupabaseAuthState: async () => ({ state: {}, saveCreds: mocks.save, flush: mocks.flush }) }));
 vi.mock("./supabase-admin", () => ({ getSupabaseAdmin: () => ({ rpc: mocks.rpc }) }));
 vi.mock("qrcode", () => ({ toDataURL: async () => "data:image/png;base64,test" }));
@@ -65,6 +65,13 @@ describe("WhatsApp socket lifecycle", () => {
     }));
     expect(mocks.socket.sendMessage).toHaveBeenCalledWith("987654321@lid", expect.objectContaining({ text: expect.any(String) }));
   });
+  it("cancels a wrapped disappearing text message", async () => {
+    await startWhatsApp();
+    mocks.listeners.get("messages.upsert")?.({ type: "notify", messages: [
+      { key: { remoteJid: "18095551234@s.whatsapp.net", fromMe: false }, message: { ephemeralMessage: { message: { conversation: "Cancelar" } } } },
+    ] });
+    await vi.waitFor(() => expect(mocks.rpc).toHaveBeenCalledWith("cancel_queue_phone_details", { p_phone: "18095551234" }));
+  });
   it("resolves a LID from WhatsApp contact updates when the message has no sender phone", async () => {
     await startWhatsApp();
     mocks.listeners.get("contacts.upsert")?.([{ id: "987654321@lid", jid: "18095551234@s.whatsapp.net" }]);
@@ -93,7 +100,7 @@ describe("WhatsApp socket lifecycle", () => {
   it("schedules reconnection after a transient close and clears it on shutdown", async () => {
     await startWhatsApp();
     mocks.listeners.get("connection.update")?.({ connection: "close", lastDisconnect: { error: { output: { statusCode: 408 } } } });
-    expect(globalThis.__waState?.retry).toBeDefined();
+    await vi.waitFor(() => expect(globalThis.__waState?.retry).toBeDefined());
     await stopWhatsApp();
     expect(globalThis.__waState?.retry).toBeUndefined();
     expect(await sendWhatsApp("18095551234", "Aviso")).toBe(false);

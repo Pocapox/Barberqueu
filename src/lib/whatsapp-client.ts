@@ -1,5 +1,5 @@
 import type { WASocket } from "@whiskeysockets/baileys";
-import { makeWASocket, DisconnectReason, fetchLatestWaWebVersion } from "./baileys";
+import { makeWASocket, DisconnectReason, fetchLatestWaWebVersion, normalizeMessageContent } from "./baileys";
 import pino from "pino";
 import { toDataURL } from "qrcode";
 import { useSupabaseAuthState } from "./whatsapp-auth";
@@ -90,6 +90,7 @@ export async function startWhatsApp(): Promise<void> {
           if (update.connection === "open") { s.status = "connected"; s.qr = null; s.attempts = 0; }
           if (update.connection === "close") {
             s.status = "disconnected"; s.qr = null; detach();
+            await auth.flush();
             const error = update.lastDisconnect?.error as { output?: { statusCode?: number } } | undefined;
             const code = error?.output?.statusCode;
             console.warn("WhatsApp disconnected with code:", code ?? "unknown");
@@ -108,7 +109,8 @@ export async function startWhatsApp(): Promise<void> {
           for (const message of event.messages) {
             const jid = message.key.remoteJid;
             if (message.key.fromMe || !jid || !(jid.endsWith("@s.whatsapp.net") || jid.endsWith("@lid")) || message.message?.protocolMessage) continue;
-            const text = message.message?.conversation ?? message.message?.extendedTextMessage?.text;
+            const content = normalizeMessageContent(message.message);
+            const text = content?.conversation ?? content?.extendedTextMessage?.text;
             if (!isCancelCommand(text)) continue;
             rememberPhone(jid, message.key.senderPn);
             const phone = jid.endsWith("@lid") ? state().lidPhones.get(jid) : phoneFromJid(jid);
@@ -124,7 +126,7 @@ export async function startWhatsApp(): Promise<void> {
           }
         })().catch(() => console.error("No se pudo procesar un comando de WhatsApp."));
       });
-    } catch (error) { console.warn("WhatsApp startup failed:", error instanceof Error ? error.name : "unknown"); s.status = "error"; retry(); }
+    } catch (error) { console.warn("WhatsApp startup failed:", error instanceof Error ? error.name : "unknown"); s.status = "error"; detach(); retry(); }
     finally { s.starting = undefined; }
   })();
   return s.starting;
