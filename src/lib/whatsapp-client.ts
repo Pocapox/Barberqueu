@@ -127,15 +127,17 @@ export async function startWhatsApp(shopId = defaultShopId()): Promise<void> {
               continue;
             }
             const db = getSupabaseAdmin();
-            const { data: pending, error: pendingError } = await db.from("queue_entries").select("id").eq("shop_id", shopId).eq("customer_phone", phone).eq("status", "waiting").maybeSingle();
-            if (pendingError) throw pendingError;
-            const { error } = pending ? await db.rpc("cancel_queue_phone", { p_shop: shopId, p_phone: phone }) : { error: null };
-            if (error) throw error;
+            const { data: cancelled, error: cancelError } = await db.from("queue_entries")
+              .update({ status: "cancelled" })
+              .eq("shop_id", shopId).eq("customer_phone", phone)
+              .in("status", ["waiting", "serving"])
+              .select("id,status").maybeSingle();
+            if (cancelError) throw cancelError;
             const { data: shop, error: shopError } = await db.from("shops").select("barber_name").eq("id", shopId).single();
             if (shopError) throw shopError;
-            await socket.sendMessage(jid, { text: pending
+            await socket.sendMessage(jid, { text: cancelled
               ? `Tu turno con ${shop.barber_name} fue cancelado.`
-              : "No encontramos un turno en espera para cancelar. Si ya estás en el sillón, habla con tu barbero." });
+              : `No encontramos un turno activo con ${shop.barber_name} para cancelar.` });
           }
         })().catch(() => console.error("No se pudo procesar un comando de WhatsApp."));
       });

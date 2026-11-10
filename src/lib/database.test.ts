@@ -67,6 +67,14 @@ describe("durable WhatsApp outbox", () => {
 });
 
 describe("active queue constraints", () => {
+  it("allows a barber's WhatsApp command to cancel a serving turn without touching another shop", async () => {
+    const current = await insert("18095551234", "serving", shop);
+    const other = await insert("18295551234", "serving", otherShop);
+    await asRole("service_role", `UPDATE public.queue_entries SET status='cancelled'
+      WHERE shop_id='${shop}' AND customer_phone='18095551234' AND status IN ('waiting','serving')`);
+    expect((await db.query<{ status: string }>("SELECT status FROM queue_entries WHERE id=$1", [current.rows[0].id])).rows[0].status).toBe("cancelled");
+    expect((await db.query<{ status: string }>("SELECT status FROM queue_entries WHERE id=$1", [other.rows[0].id])).rows[0].status).toBe("serving");
+  });
   it.each(["waiting", "serving"])("rejects duplicate active phone when existing is %s", async (status) => {
     await insert("18095551234", status);
     await expect(insert()).rejects.toMatchObject({ code: "23505" });

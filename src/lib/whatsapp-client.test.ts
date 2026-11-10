@@ -3,25 +3,31 @@ const mocks = vi.hoisted(() => {
   const listeners = new Map<string, (event: unknown) => void>();
   const socket = { ev: { on: vi.fn((name: string, callback: (event: unknown) => void) => listeners.set(name, callback)), removeAllListeners: vi.fn((name: string) => listeners.delete(name)) }, end: vi.fn(), sendMessage: vi.fn() };
   const shopName = { value: "María" };
+  const activeStatus = { value: "waiting" as "waiting" | "serving" | null };
+  const update = vi.fn();
+  const eq = vi.fn();
+  const inFilter = vi.fn();
   const from = vi.fn((table: string) => {
-    const query = { select: () => query, eq: () => query,
-      maybeSingle: async () => ({ data: { id: "entry" }, error: null }),
+    const query = { select: () => query, update: (value: unknown) => { update(value); return query; },
+      eq: (key: string, value: string) => { eq(key, value); return query; },
+      in: (key: string, value: string[]) => { inFilter(key, value); return query; },
+      maybeSingle: async () => ({ data: activeStatus.value ? { id: "entry", status: "cancelled" } : null, error: null }),
       single: async () => ({ data: { barber_name: shopName.value }, error: null }) };
     if (table !== "queue_entries" && table !== "shops") throw new Error(`Unexpected table ${table}`);
     return query;
   });
-  return { listeners, socket, factory: vi.fn(() => socket), rpc: vi.fn(), from, shopName, flush: vi.fn(), save: vi.fn() };
+  return { listeners, socket, factory: vi.fn(() => socket), from, shopName, activeStatus, update, eq, inFilter, flush: vi.fn(), save: vi.fn() };
 });
 vi.mock("./baileys", () => ({ makeWASocket: mocks.factory, normalizeMessageContent: (value: { ephemeralMessage?: { message: unknown } } | undefined) => value?.ephemeralMessage?.message ?? value, fetchLatestWaWebVersion: async () => ({ isLatest: true, version: [2, 3000, 1053729251] }), DisconnectReason: { loggedOut: 401, badSession: 500, connectionReplaced: 440 } }));
 vi.mock("./whatsapp-auth", () => ({ useSupabaseAuthState: async () => ({ state: {}, saveCreds: mocks.save, flush: mocks.flush }) }));
-vi.mock("./supabase-admin", () => ({ getSupabaseAdmin: () => ({ rpc: mocks.rpc, from: mocks.from }) }));
+vi.mock("./supabase-admin", () => ({ getSupabaseAdmin: () => ({ from: mocks.from }) }));
 vi.mock("qrcode", () => ({ toDataURL: async () => "data:image/png;base64,test" }));
 import { sendWhatsApp, startWhatsApp, stopWhatsApp, whatsappStatus } from "./whatsapp-client";
 
 beforeEach(() => {
   globalThis.__waStates = undefined;
   mocks.listeners.clear(); vi.clearAllMocks();
-  mocks.socket.sendMessage.mockResolvedValue({}); mocks.rpc.mockResolvedValue({ error: null }); mocks.flush.mockResolvedValue(undefined);
+  mocks.socket.sendMessage.mockResolvedValue({}); mocks.activeStatus.value = "waiting"; mocks.flush.mockResolvedValue(undefined);
 });
 afterEach(async () => { await stopWhatsApp(); });
 describe("WhatsApp socket lifecycle", () => {
@@ -34,7 +40,8 @@ describe("WhatsApp socket lifecycle", () => {
     mocks.listeners.get("messages.upsert")?.({ type: "notify", messages: [
       { key: { remoteJid: "18095551234@s.whatsapp.net", fromMe: false }, message: { conversation: "CANCELAR" } },
     ] });
-    await vi.waitFor(() => expect(mocks.rpc).toHaveBeenCalledWith("cancel_queue_phone", { p_shop: shopId, p_phone: "18095551234" }));
+    await vi.waitFor(() => expect(mocks.update).toHaveBeenCalledWith({ status: "cancelled" }));
+    expect(mocks.eq).toHaveBeenCalledWith("shop_id", shopId);
   });
   it("shares one socket across concurrent startup calls and closes listeners cleanly", async () => {
     await Promise.all([startWhatsApp(), startWhatsApp(), startWhatsApp()]);
@@ -60,38 +67,52 @@ describe("WhatsApp socket lifecycle", () => {
     const message = { key: { remoteJid: "18095551234@s.whatsapp.net", fromMe: false }, message: { conversation: " cancelar " } };
     listener({ type: "append", messages: [message] });
     listener({ type: "notify", messages: [{ ...message, key: { remoteJid: "group@g.us" } }] });
-    expect(mocks.rpc).not.toHaveBeenCalled();
+    expect(mocks.update).not.toHaveBeenCalled();
     listener({ type: "notify", messages: [message] });
-    await vi.waitFor(() => expect(mocks.rpc).toHaveBeenCalledWith("cancel_queue_phone", { p_shop: "00000000-0000-0000-0000-000000000001", p_phone: "18095551234" }));
+    await vi.waitFor(() => expect(mocks.update).toHaveBeenCalledWith({ status: "cancelled" }));
   });
   it.each(["Cancelar", "CANCELAR", "cancelar"])("cancels an active turn for WhatsApp text %s", async text => {
     await startWhatsApp();
     mocks.listeners.get("messages.upsert")?.({ type: "notify", messages: [
       { key: { remoteJid: "18095551234@s.whatsapp.net", fromMe: false }, message: { conversation: text } },
     ] });
-    await vi.waitFor(() => expect(mocks.rpc).toHaveBeenCalledWith("cancel_queue_phone", {
-      p_shop: "00000000-0000-0000-0000-000000000001",
-      p_phone: "18095551234",
-    }));
-    expect(mocks.rpc).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(mocks.update).toHaveBeenCalledWith({ status: "cancelled" }));
+    expect(mocks.update).toHaveBeenCalledTimes(1);
+    expect(mocks.inFilter).toHaveBeenCalledWith("status", ["waiting", "serving"]);
+  });
+  it("cancels the customer who is already in the chair", async () => {
+    mocks.activeStatus.value = "serving";
+    await startWhatsApp();
+    mocks.listeners.get("messages.upsert")?.({ type: "notify", messages: [
+      { key: { remoteJid: "18095551234@s.whatsapp.net", fromMe: false }, message: { conversation: "Cancelar" } },
+    ] });
+    await vi.waitFor(() => expect(mocks.update).toHaveBeenCalledWith({ status: "cancelled" }));
+    expect(mocks.inFilter).toHaveBeenCalledWith("status", ["waiting", "serving"]);
+    expect(mocks.eq).toHaveBeenCalledWith("customer_phone", "18095551234");
+    await vi.waitFor(() => expect(mocks.socket.sendMessage).toHaveBeenCalledWith("18095551234@s.whatsapp.net", { text: "Tu turno con María fue cancelado." }));
+  });
+  it("does not confirm cancellation when the customer has no active turn", async () => {
+    mocks.activeStatus.value = null;
+    await startWhatsApp();
+    mocks.listeners.get("messages.upsert")?.({ type: "notify", messages: [
+      { key: { remoteJid: "18095551234@s.whatsapp.net", fromMe: false }, message: { conversation: "cancelar" } },
+    ] });
+    await vi.waitFor(() => expect(mocks.socket.sendMessage).toHaveBeenCalledWith("18095551234@s.whatsapp.net", { text: "No encontramos un turno activo con María para cancelar." }));
   });
   it("uses the sender phone when a direct chat arrives with a LID", async () => {
     await startWhatsApp();
     mocks.listeners.get("messages.upsert")?.({ type: "notify", messages: [
       { key: { remoteJid: "987654321@lid", senderPn: "18095551234@s.whatsapp.net", fromMe: false }, message: { extendedTextMessage: { text: "Cancelar" } } },
     ] });
-    await vi.waitFor(() => expect(mocks.rpc).toHaveBeenCalledWith("cancel_queue_phone", {
-      p_shop: "00000000-0000-0000-0000-000000000001",
-      p_phone: "18095551234",
-    }));
-    expect(mocks.socket.sendMessage).toHaveBeenCalledWith("987654321@lid", expect.objectContaining({ text: expect.any(String) }));
+    await vi.waitFor(() => expect(mocks.update).toHaveBeenCalledWith({ status: "cancelled" }));
+    await vi.waitFor(() => expect(mocks.socket.sendMessage).toHaveBeenCalledWith("987654321@lid", expect.objectContaining({ text: expect.any(String) })));
   });
   it("cancels a wrapped disappearing text message", async () => {
     await startWhatsApp();
     mocks.listeners.get("messages.upsert")?.({ type: "notify", messages: [
       { key: { remoteJid: "18095551234@s.whatsapp.net", fromMe: false }, message: { ephemeralMessage: { message: { conversation: "Cancelar" } } } },
     ] });
-    await vi.waitFor(() => expect(mocks.rpc).toHaveBeenCalledWith("cancel_queue_phone", { p_shop: "00000000-0000-0000-0000-000000000001", p_phone: "18095551234" }));
+    await vi.waitFor(() => expect(mocks.update).toHaveBeenCalledWith({ status: "cancelled" }));
   });
   it("resolves a LID from WhatsApp contact updates when the message has no sender phone", async () => {
     await startWhatsApp();
@@ -99,13 +120,9 @@ describe("WhatsApp socket lifecycle", () => {
     mocks.listeners.get("messages.upsert")?.({ type: "notify", messages: [
       { key: { remoteJid: "987654321@lid", fromMe: false }, message: { conversation: "cancelar" } },
     ] });
-    await vi.waitFor(() => expect(mocks.rpc).toHaveBeenCalledWith("cancel_queue_phone", {
-      p_shop: "00000000-0000-0000-0000-000000000001",
-      p_phone: "18095551234",
-    }));
+    await vi.waitFor(() => expect(mocks.update).toHaveBeenCalledWith({ status: "cancelled" }));
   });
   it("confirms cancellation using the barber's name", async () => {
-    mocks.rpc.mockResolvedValue({ data: ["María"], error: null });
     await startWhatsApp();
     mocks.listeners.get("messages.upsert")?.({ type: "notify", messages: [
       { key: { remoteJid: "18095551234@s.whatsapp.net", fromMe: false }, message: { conversation: "CANCELAR" } },
@@ -117,7 +134,7 @@ describe("WhatsApp socket lifecycle", () => {
     mocks.listeners.get("messages.upsert")?.({ type: "notify", requestId: "offline-delivery", messages: [
       { key: { remoteJid: "18095551234@s.whatsapp.net", fromMe: false }, message: { conversation: "CANCELAR" } },
     ] });
-    await vi.waitFor(() => expect(mocks.rpc).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(mocks.update).toHaveBeenCalledTimes(1));
   });
   it("schedules reconnection after a transient close and clears it on shutdown", async () => {
     await startWhatsApp();
