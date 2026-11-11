@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => {
   const listeners = new Map<string, (event: unknown) => void>();
-  const socket = { ev: { on: vi.fn((name: string, callback: (event: unknown) => void) => listeners.set(name, callback)), removeAllListeners: vi.fn((name: string) => listeners.delete(name)) }, end: vi.fn(), sendMessage: vi.fn() };
+  const socket = { ev: { on: vi.fn((name: string, callback: (event: unknown) => void) => listeners.set(name, callback)), removeAllListeners: vi.fn((name: string) => listeners.delete(name)) }, end: vi.fn(), sendMessage: vi.fn(), onWhatsApp: vi.fn() };
   const shopName = { value: "María" };
   const activeStatus = { value: "waiting" as "waiting" | "serving" | null };
   const update = vi.fn();
@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => {
     const query = { select: () => query, update: (value: unknown) => { update(value); return query; },
       eq: (key: string, value: string) => { eq(key, value); return query; },
       in: (key: string, value: string[]) => { inFilter(key, value); return query; },
+      then: (resolve: (value: unknown) => unknown) => Promise.resolve({ data: [{ customer_phone: "18095551234" }], error: null }).then(resolve),
       maybeSingle: async () => ({ data: activeStatus.value ? { id: "entry", status: "cancelled" } : null, error: null }),
       single: async () => ({ data: { barber_name: shopName.value }, error: null }) };
     if (table !== "queue_entries" && table !== "shops") throw new Error(`Unexpected table ${table}`);
@@ -28,6 +29,7 @@ beforeEach(() => {
   globalThis.__waStates = undefined;
   mocks.listeners.clear(); vi.clearAllMocks();
   mocks.socket.sendMessage.mockResolvedValue({}); mocks.activeStatus.value = "waiting"; mocks.flush.mockResolvedValue(undefined);
+  mocks.socket.onWhatsApp.mockResolvedValue([]);
 });
 afterEach(async () => { await stopWhatsApp(); });
 describe("WhatsApp socket lifecycle", () => {
@@ -106,6 +108,26 @@ describe("WhatsApp socket lifecycle", () => {
     ] });
     await vi.waitFor(() => expect(mocks.update).toHaveBeenCalledWith({ status: "cancelled" }));
     await vi.waitFor(() => expect(mocks.socket.sendMessage).toHaveBeenCalledWith("987654321@lid", expect.objectContaining({ text: expect.any(String) })));
+  });
+  it("resolves an unknown LID through WhatsApp using only this barber's active customers", async () => {
+    mocks.socket.onWhatsApp.mockResolvedValue([{ jid: "18095551234@s.whatsapp.net", lid: "987654321@lid", exists: true }]);
+    await startWhatsApp();
+    mocks.listeners.get("messages.upsert")?.({ type: "notify", messages: [
+      { key: { remoteJid: "987654321@lid", fromMe: false }, message: { conversation: "Cancelar" } },
+    ] });
+    await vi.waitFor(() => expect(mocks.socket.sendMessage).toHaveBeenCalledWith("987654321@lid", { text: "Tu turno con María fue cancelado." }));
+    expect(mocks.socket.onWhatsApp).toHaveBeenCalledWith("18095551234@s.whatsapp.net");
+    expect(mocks.eq).toHaveBeenCalledWith("shop_id", "00000000-0000-0000-0000-000000000001");
+    expect(mocks.eq).toHaveBeenCalledWith("customer_phone", "18095551234");
+  });
+  it("does not cancel a turn when WhatsApp returns a different LID", async () => {
+    mocks.socket.onWhatsApp.mockResolvedValue([{ jid: "18095551234@s.whatsapp.net", lid: "111111111@lid", exists: true }]);
+    await startWhatsApp();
+    mocks.listeners.get("messages.upsert")?.({ type: "notify", messages: [
+      { key: { remoteJid: "987654321@lid", fromMe: false }, message: { conversation: "cancelar" } },
+    ] });
+    await vi.waitFor(() => expect(mocks.socket.onWhatsApp).toHaveBeenCalled());
+    expect(mocks.update).not.toHaveBeenCalled();
   });
   it("cancels a wrapped disappearing text message", async () => {
     await startWhatsApp();

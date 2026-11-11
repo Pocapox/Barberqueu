@@ -39,6 +39,24 @@ function rememberPhone(s: WAState, lid: string | null | undefined, jid: string |
   if (lid?.endsWith("@lid") && phone) s.lidPhones.set(lid, phone);
 }
 
+async function resolvePhone(s: WAState, socket: WASocket, shopId: string, jid: string) {
+  const known = phoneFromJid(jid) ?? s.lidPhones.get(jid);
+  if (known || !jid.endsWith("@lid")) return known;
+  const { data, error } = await getSupabaseAdmin().from("queue_entries")
+    .select("customer_phone").eq("shop_id", shopId).in("status", ["waiting", "serving"]);
+  if (error) throw error;
+  const phones = [...new Set((data ?? []).map(entry => entry.customer_phone))];
+  for (let offset = 0; offset < phones.length; offset += 20) {
+    const matches = await socket.onWhatsApp(...phones.slice(offset, offset + 20).map(phone => `${phone}@s.whatsapp.net`));
+    for (const match of matches ?? []) {
+      if (match.exists && typeof match.lid === "string") rememberPhone(s, match.lid, match.jid);
+    }
+    const phone = s.lidPhones.get(jid);
+    if (phone) return phone;
+  }
+  return undefined;
+}
+
 function detach(s: WAState) {
   const socket = s.socket;
   s.socket = undefined;
@@ -121,7 +139,7 @@ export async function startWhatsApp(shopId = defaultShopId()): Promise<void> {
             const text = content?.conversation ?? content?.extendedTextMessage?.text;
             if (!isCancelCommand(text)) continue;
             rememberPhone(s, jid, message.key.senderPn);
-            const phone = jid.endsWith("@lid") ? s.lidPhones.get(jid) : phoneFromJid(jid);
+            const phone = await resolvePhone(s, socket, shopId, jid);
             if (!phone) {
               console.warn("WhatsApp CANCELAR recibido sin número de teléfono asociado.");
               continue;
