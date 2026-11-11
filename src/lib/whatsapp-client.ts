@@ -5,6 +5,7 @@ import { toDataURL } from "qrcode";
 import { useSupabaseAuthState } from "./whatsapp-auth";
 import { getSupabaseAdmin } from "./supabase-admin";
 import { isCancelCommand } from "./whatsapp-command";
+import { recordWhatsAppDelivery } from "./whatsapp-delivery";
 
 type WAState = {
   status: "disconnected" | "connecting" | "qr" | "connected" | "error";
@@ -31,6 +32,7 @@ const state = (shopId = defaultShopId()): WAState => {
 };
 export const defaultShopId = () => process.env.NEXT_PUBLIC_DEFAULT_SHOP_ID ?? "00000000-0000-0000-0000-000000000001";
 export function whatsappStatus(shopId = defaultShopId()) { const s = state(shopId); return { status: s.status, qr: s.qr }; }
+export function connectedWhatsAppShops() { return [...states()].filter(([, s]) => s.status === "connected").map(([id]) => id); }
 function phoneFromJid(jid: string | null | undefined): string | undefined {
   return jid?.match(/^([1-9]\d{7,14})(?::\d+)?@s\.whatsapp\.net$/)?.[1];
 }
@@ -67,6 +69,8 @@ function detach(s: WAState) {
     socket.ev.removeAllListeners("contacts.upsert");
     socket.ev.removeAllListeners("contacts.update");
     socket.ev.removeAllListeners("chats.phoneNumberShare");
+    socket.ev.removeAllListeners("messages.update");
+    socket.ev.removeAllListeners("message-receipt.update");
     socket.end(undefined);
   }
   s.lidPhones.clear();
@@ -94,7 +98,14 @@ export async function startWhatsApp(shopId = defaultShopId()): Promise<void> {
       const logger = pino({ level: "silent" }) as unknown as NonNullable<Parameters<typeof makeWASocket>[0]["logger"]>;
       const socket = makeWASocket({ auth: auth.state, version: waVersion.version, logger, printQRInTerminal: false,
         syncFullHistory: false, shouldSyncHistoryMessage: () => false, markOnlineOnConnect: false,
-        connectTimeoutMs: 20000, defaultQueryTimeoutMs: 15000 });
+        connectTimeoutMs: 20000, defaultQueryTimeoutMs: 15000,
+        getMessage: async key => {
+          if (!key.id) return undefined;
+          const { data, error } = await getSupabaseAdmin().from("whatsapp_outbox").select("body")
+            .eq("shop_id", shopId).eq("message_id", key.id).neq("status", "superseded").maybeSingle();
+          if (error) throw error;
+          return data ? { conversation: data.body } : undefined;
+        } });
       s.socket = socket;
       const fail = () => { s.status = "error"; s.qr = null; detach(s); retry(shopId); };
       socket.ev.on("creds.update", () => { void auth.saveCreds().catch(fail); });
@@ -105,6 +116,16 @@ export async function startWhatsApp(shopId = defaultShopId()): Promise<void> {
         for (const contact of contacts) rememberPhone(s, contact.lid ?? contact.id, contact.jid ?? contact.id);
       });
       socket.ev.on("chats.phoneNumberShare", ({ lid, jid }) => rememberPhone(s, lid, jid));
+      socket.ev.on("messages.update", updates => {
+        for (const { key, update } of updates) {
+          if (key.fromMe && key.id && update.status != null && update.status >= 3) recordWhatsAppDelivery(shopId, key.id);
+        }
+      });
+      socket.ev.on("message-receipt.update", updates => {
+        for (const { key, receipt } of updates) {
+          if (key.fromMe && key.id && (receipt.receiptTimestamp || receipt.readTimestamp || receipt.playedTimestamp)) recordWhatsAppDelivery(shopId, key.id);
+        }
+      });
       socket.ev.on("connection.update", update => {
         void (async () => {
           if (s.socket !== socket) return;
@@ -113,7 +134,10 @@ export async function startWhatsApp(shopId = defaultShopId()): Promise<void> {
             const qr = await toDataURL(update.qr, { margin: 2, width: 300 });
             if (s.socket === socket) { s.qr = qr; s.status = "qr"; }
           }
-          if (update.connection === "open") { s.status = "connected"; s.qr = null; s.attempts = 0; }
+          if (update.connection === "open") {
+            s.status = "connected"; s.qr = null; s.attempts = 0;
+            void import("./whatsapp-outbox").then(module => module.drainWhatsAppOutbox()).catch(() => console.warn("Avisos pendientes tras reconexión."));
+          }
           if (update.connection === "close") {
             s.status = "disconnected"; s.qr = null; detach(s);
             await auth.flush();
@@ -171,12 +195,16 @@ export async function restoreWhatsAppSessions() {
   for (const { shop_id } of data ?? []) void startWhatsApp(shop_id);
 }
 
-export async function sendWhatsApp(shopId: string, phone: string, text: string): Promise<boolean> {
+export async function sendWhatsApp(shopId: string, phone: string, text: string, messageId?: string): Promise<boolean> {
   if (!/^[1-9]\d{7,14}$/.test(phone)) return false;
   const s = state(shopId);
   const socket = s.socket;
   if (!socket || s.status !== "connected") return false;
-  try { await socket.sendMessage(`${phone}@s.whatsapp.net`, { text }); return true; }
+  try {
+    if (messageId) await socket.sendMessage(`${phone}@s.whatsapp.net`, { text }, { messageId });
+    else await socket.sendMessage(`${phone}@s.whatsapp.net`, { text });
+    return true;
+  }
   catch { return false; }
 }
 

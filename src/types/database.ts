@@ -40,6 +40,7 @@ export type WhatsAppOutbox = {
   id: string; shop_id: string; entry_id: string; kind: "welcome" | "chair" | "progress" | "upcoming";
   phone: string; body: string; status: "pending" | "sending" | "sent" | "superseded";
   attempts: number; next_attempt_at: string; leased_until: string | null; sent_at: string | null; created_at: string;
+  message_id: string | null; delivered_at: string | null;
 };
 
 export type BarberAccount = {
@@ -114,6 +115,9 @@ export type Database = {
       cancel_queue_phone_details: { Args: { p_phone: string }; Returns: string[] };
       claim_whatsapp_outbox: { Args: { p_limit?: number }; Returns: WhatsAppOutbox[] };
       finish_whatsapp_outbox: { Args: { p_id: string; p_success: boolean }; Returns: undefined };
+      claim_whatsapp_deliveries: { Args: { p_shops: string[]; p_limit?: number }; Returns: WhatsAppOutbox[] };
+      finish_whatsapp_attempt: { Args: { p_id: string; p_message_id: string; p_success: boolean }; Returns: undefined };
+      confirm_whatsapp_delivery: { Args: { p_shop: string; p_message_id: string }; Returns: undefined };
     };
     Enums: { [_ in never]: never };
     CompositeTypes: { [_ in never]: never };

@@ -36,6 +36,7 @@ beforeAll(async () => {
   await db.exec(await readFile("supabase/migrations/006_claim_primary_barber.sql", "utf8"));
   await db.exec(await readFile("supabase/migrations/007_manage_barbers.sql", "utf8"));
   await db.exec(await readFile("supabase/migrations/008_whatsapp_outbox.sql", "utf8"));
+  await db.exec(await readFile("supabase/migrations/009_whatsapp_delivery.sql", "utf8"));
   await db.exec(`INSERT INTO public.shops (id,slug,name,barber_name)
     VALUES ('${otherShop}', 'otra', 'Otra', 'Otro')`);
 }, 30000);
@@ -50,6 +51,31 @@ beforeEach(async () => {
 afterAll(async () => { await db?.close(); });
 
 describe("durable WhatsApp outbox", () => {
+  it("requires a delivery receipt, survives a retry and ignores another barber's receipt", async () => {
+    await db.query("SELECT join_queue($1,$2,$3,$4)", [shop,"Ana","18095551234","a".repeat(64)]);
+    expect((await db.query("SELECT * FROM claim_whatsapp_deliveries($1,1)", [[otherShop]])).rows).toHaveLength(0);
+    const claimed = (await db.query<{ id: string; message_id: string }>("SELECT * FROM claim_whatsapp_deliveries($1,1)", [[shop]])).rows[0];
+    await db.query("SELECT finish_whatsapp_attempt($1,$2,true)", [claimed.id,claimed.message_id]);
+    expect((await db.query<{ status: string }>("SELECT status FROM whatsapp_outbox WHERE id=$1", [claimed.id])).rows[0].status).toBe("sending");
+    await db.query("SELECT confirm_whatsapp_delivery($1,$2)", [otherShop,claimed.message_id]);
+    await db.query("UPDATE whatsapp_outbox SET leased_until=now()-interval '1 second' WHERE id=$1", [claimed.id]);
+    const retry = (await db.query<{ message_id: string }>("SELECT * FROM claim_whatsapp_deliveries($1,1)", [[shop]])).rows[0];
+    expect(retry.message_id).toBe(claimed.message_id);
+    await db.query("SELECT confirm_whatsapp_delivery($1,$2)", [shop,claimed.message_id]);
+    await db.query("SELECT finish_whatsapp_attempt($1,$2,false)", [claimed.id,claimed.message_id]);
+    expect((await db.query<{ status: string; delivered_at: string }>("SELECT status,delivered_at FROM whatsapp_outbox WHERE id=$1", [claimed.id])).rows[0]).toMatchObject({ status: "sent", delivered_at: expect.anything() });
+    expect((await db.query("SELECT * FROM claim_whatsapp_deliveries($1,1)", [[shop]])).rows).toHaveLength(0);
+  });
+  it("retries failures within 30 seconds and supersedes old messages when the turn advances", async () => {
+    const first = (await db.query<{ data: { id: string } }>("SELECT join_queue($1,$2,$3,$4) AS data", [shop,"Ana","18095551234","a".repeat(64)])).rows[0].data.id;
+    const old = (await db.query<{ id: string; message_id: string }>("SELECT * FROM claim_whatsapp_deliveries($1,1)", [[shop]])).rows[0];
+    await db.query("SELECT finish_whatsapp_attempt($1,$2,false)", [old.id,old.message_id]);
+    expect((await db.query<{ seconds: number }>("SELECT extract(epoch FROM next_attempt_at-now())::int AS seconds FROM whatsapp_outbox WHERE id=$1", [old.id])).rows[0].seconds).toBeLessThanOrEqual(30);
+    await db.query("SELECT advance_queue($1,$2,$3,$4)", [shop,null,first,"completed"]);
+    const latest = (await db.query<{ kind: string; body: string }>("SELECT * FROM claim_whatsapp_deliveries($1,1)", [[shop]])).rows[0];
+    expect(latest.kind).toBe("chair"); expect(latest.body).toContain("Barbero Principal");
+    expect((await db.query<{ status: string }>("SELECT status FROM whatsapp_outbox WHERE id=$1", [old.id])).rows[0].status).toBe("superseded");
+  });
   it("queues welcome and progress atomically, then claims and marks delivery", async () => {
     const first = (await db.query<{ data: { id: string } }>("SELECT join_queue($1,$2,$3,$4) AS data", [shop,"Ana","18095551234","a".repeat(64)])).rows[0].data.id;
     const second = (await db.query<{ data: { id: string } }>("SELECT join_queue($1,$2,$3,$4) AS data", [shop,"Luis","18295551234","b".repeat(64)])).rows[0].data.id;

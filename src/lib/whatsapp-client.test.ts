@@ -17,8 +17,10 @@ const mocks = vi.hoisted(() => {
     if (table !== "queue_entries" && table !== "shops") throw new Error(`Unexpected table ${table}`);
     return query;
   });
-  return { listeners, socket, factory: vi.fn(() => socket), from, shopName, activeStatus, update, eq, inFilter, flush: vi.fn(), save: vi.fn() };
+  return { listeners, socket, factory: vi.fn(() => socket), from, shopName, activeStatus, update, eq, inFilter, flush: vi.fn(), save: vi.fn(), delivery: vi.fn(), drain: vi.fn(async () => 0) };
 });
+vi.mock("./whatsapp-delivery", () => ({ recordWhatsAppDelivery: mocks.delivery }));
+vi.mock("./whatsapp-outbox", () => ({ drainWhatsAppOutbox: mocks.drain }));
 vi.mock("./baileys", () => ({ makeWASocket: mocks.factory, normalizeMessageContent: (value: { ephemeralMessage?: { message: unknown } } | undefined) => value?.ephemeralMessage?.message ?? value, fetchLatestWaWebVersion: async () => ({ isLatest: true, version: [2, 3000, 1053729251] }), DisconnectReason: { loggedOut: 401, badSession: 500, connectionReplaced: 440 } }));
 vi.mock("./whatsapp-auth", () => ({ useSupabaseAuthState: async () => ({ state: {}, saveCreds: mocks.save, flush: mocks.flush }) }));
 vi.mock("./supabase-admin", () => ({ getSupabaseAdmin: () => ({ from: mocks.from }) }));
@@ -33,6 +35,17 @@ beforeEach(() => {
 });
 afterEach(async () => { await stopWhatsApp(); });
 describe("WhatsApp socket lifecycle", () => {
+  it("confirms device delivery but not server acceptance and preserves retry message IDs", async () => {
+    await startWhatsApp();
+    mocks.listeners.get("connection.update")?.({ connection: "open" });
+    const key = { id: "message-id", fromMe: true };
+    mocks.listeners.get("messages.update")?.([{ key, update: { status: 2 } }]);
+    expect(mocks.delivery).not.toHaveBeenCalled();
+    mocks.listeners.get("messages.update")?.([{ key, update: { status: 3 } }]);
+    expect(mocks.delivery).toHaveBeenCalledWith("00000000-0000-0000-0000-000000000001", "message-id");
+    await sendWhatsApp("00000000-0000-0000-0000-000000000001", "18095551234", "Aviso", "message-id");
+    expect(mocks.socket.sendMessage).toHaveBeenCalledWith("18095551234@s.whatsapp.net", { text: "Aviso" }, { messageId: "message-id" });
+  });
   it("keeps each barber's connection state separate and scopes CANCELAR", async () => {
     const shopId = "11111111-1111-4111-8111-111111111111";
     await startWhatsApp(shopId);
