@@ -1,6 +1,7 @@
 import { timingSafeEqual, createHash } from "node:crypto";
 import { z } from "zod";
-import { barberCredentialTag, verifyBarberToken } from "@/lib/barber-auth";
+import { barberCredentialTag, verifyBarberToken, verifyOwnerToken } from "@/lib/barber-auth";
+import { readManagerToken } from "@/lib/manager-session";
 import { getSupabaseAdmin } from "@/lib/supabase-admin";
 
 export class ApiError extends Error { constructor(public status: number, message: string) { super(message); } }
@@ -34,7 +35,9 @@ export function requireAdmin(request: Request) {
   if (!expected) throw new ApiError(503, "Configura el PIN en el servidor.");
   const blocked = attempts.get("failed-admin");
   if (blocked && blocked.expires > Date.now() && blocked.count >= 20) throw new ApiError(429, "Demasiados intentos. Espera un minuto.");
-  const received = request.headers.get("x-admin-pin") ?? "";
+  const headerPin = request.headers.get("x-admin-pin");
+  if (headerPin === null && verifyOwnerToken(readManagerToken(request))) return;
+  const received = headerPin ?? "";
   if (received.length > 128 || !timingSafeEqual(createHash("sha256").update(received).digest(), createHash("sha256").update(expected).digest())) {
     limit("failed-admin", 20);
     throw new ApiError(401, "PIN incorrecto.");
@@ -48,7 +51,13 @@ export async function requireManager(request: Request): Promise<{ shopId: string
     if (!z.guid().safeParse(shopId).success) throw new ApiError(400, "Barbero inválido.");
     return { shopId, owner: true };
   }
-  const session = verifyBarberToken(request.headers.get("x-barber-token") ?? "");
+  const cookieToken = readManagerToken(request);
+  if (verifyOwnerToken(cookieToken)) {
+    const shopId = request.headers.get("x-shop-id") ?? process.env.NEXT_PUBLIC_DEFAULT_SHOP_ID ?? "00000000-0000-0000-0000-000000000001";
+    if (!z.guid().safeParse(shopId).success) throw new ApiError(400, "Barbero inválido.");
+    return { shopId, owner: true };
+  }
+  const session = verifyBarberToken(request.headers.get("x-barber-token") ?? cookieToken);
   if (!session) throw new ApiError(401, "Inicia sesión con tu nombre y PIN.");
   const { data, error } = await getSupabaseAdmin().from("barber_accounts").select("shop_id,pin_hash").eq("shop_id", session.shopId).maybeSingle();
   if (error) throw error;

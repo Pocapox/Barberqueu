@@ -54,6 +54,36 @@ export function verifyBarberToken(token: string): { shopId: string; credential: 
   } catch { return null; }
 }
 
+function ownerCredential(): string | null {
+  const pin = process.env.ADMIN_PIN;
+  if (!pin) return null;
+  return createHmac("sha256", secret()).update("owner-credential:").update(pin).digest("base64url");
+}
+
+export function issueOwnerToken(): string {
+  const credential = ownerCredential();
+  if (!credential) throw new Error("Configura el PIN en el servidor.");
+  const payload = Buffer.from(JSON.stringify({ credential, expires: Date.now() + tokenLifetimeMs, nonce: randomBytes(12).toString("hex") })).toString("base64url");
+  const signature = createHmac("sha256", secret()).update(`owner-session:${payload}`).digest("base64url");
+  return `${payload}.${signature}`;
+}
+
+export function verifyOwnerToken(token: string): boolean {
+  if (token.length > 512 || !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(token)) return false;
+  const [payload, signature] = token.split(".");
+  const expected = createHmac("sha256", secret()).update(`owner-session:${payload}`).digest();
+  const received = Buffer.from(signature, "base64url");
+  if (received.length !== expected.length || !timingSafeEqual(received, expected)) return false;
+  try {
+    const data: unknown = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    if (!data || typeof data !== "object") return false;
+    const { credential, expires } = data as { credential?: unknown; expires?: unknown };
+    const current = ownerCredential();
+    return typeof credential === "string" && current !== null && credential === current &&
+      typeof expires === "number" && expires > Date.now() && expires <= Date.now() + tokenLifetimeMs;
+  } catch { return false; }
+}
+
 export function ownerPinMatches(pin: string): boolean {
   const expected = process.env.ADMIN_PIN;
   if (!expected) return false;

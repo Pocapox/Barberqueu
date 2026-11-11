@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { barberPinFingerprint, hashBarberPin, issueBarberToken, ownerPinMatches, verifyBarberPin, verifyBarberToken } from "./barber-auth";
+import { barberPinFingerprint, hashBarberPin, issueBarberToken, issueOwnerToken, ownerPinMatches, verifyBarberPin, verifyBarberToken, verifyOwnerToken } from "./barber-auth";
 
 beforeEach(() => {
   vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "test-server-secret");
@@ -29,5 +29,12 @@ describe("barber credentials", () => {
     expect(verifyBarberToken(token)?.shopId).toBe(shopId);
     expect(verifyBarberToken(`${token}x`)).toBeNull();
     expect(verifyBarberToken("bad")).toBeNull();
+  });
+  it("invalidates an owner session when its signature or administrator PIN changes", () => {
+    const token = issueOwnerToken();
+    expect(verifyOwnerToken(token)).toBe(true);
+    expect(verifyOwnerToken(`${token}x`)).toBe(false);
+    vi.stubEnv("ADMIN_PIN", "new-owner-secret");
+    expect(verifyOwnerToken(token)).toBe(false);
   });
 });

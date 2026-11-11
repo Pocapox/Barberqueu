@@ -9,8 +9,10 @@ vi.mock("@/lib/supabase-admin", () => ({ getSupabaseAdmin: () => ({
 import { hashBarberPin, verifyBarberToken } from "@/lib/barber-auth";
 import { GET as list } from "./route";
 import { POST as login } from "./login/route";
+import { POST as ownerLogin } from "./owner-login/route";
 import { POST as register } from "./register/route";
 import { POST as manage } from "./manage/route";
+import { GET as restoreSession, DELETE as logout } from "./session/route";
 import { POST as queueStatus } from "../queue/status/route";
 
 const main = "00000000-0000-0000-0000-000000000001";
@@ -50,6 +52,7 @@ describe("barber registration and access", () => {
     expect((await login(request({ name: "María", pin: "654321" }))).status).toBe(401);
     const response = await login(request({ name: "María", pin: "123456" }));
     expect(response.status).toBe(200);
+    expect(response.headers.get("set-cookie")).toMatch(/^barberqueue_session=[^;]+;.*HttpOnly.*SameSite=Lax/i);
     const session = await response.json();
     expect(session.shopId).toBe(barber);
     expect(verifyBarberToken(session.token)?.shopId).toBe(barber);
@@ -59,6 +62,33 @@ describe("barber registration and access", () => {
     expect((await queueStatus(request({ action: "duration", minutes: 40 }, { "x-barber-token": `${session.token}x` }))).status).toBe(401);
     mocks.maybeSingle.mockResolvedValue({ data: { shop_id: barber, pin_hash: await hashBarberPin("654321") }, error: null });
     expect((await queueStatus(request({ action: "duration", minutes: 40 }, { "x-barber-token": session.token }))).status).toBe(401);
+  });
+  it("restores barber and owner sessions from a private cookie and clears it on logout", async () => {
+    const pinHash = await hashBarberPin("123456");
+    mocks.maybeSingle.mockResolvedValue({ data: { shop_id: barber, name: "María", pin_hash: pinHash }, error: null });
+    const barberLogin = await login(request({ name: "María", pin: "123456" }));
+    const barberCookie = barberLogin.headers.get("set-cookie")?.split(";", 1)[0] ?? "";
+    const restoredBarber = await restoreSession(new Request("http://localhost/api/barbers/session", { headers: { cookie: barberCookie } }));
+    expect(restoredBarber.status).toBe(200);
+    expect(await restoredBarber.json()).toEqual({ role: "barber", shopId: barber, name: "María" });
+    const cookieMutation = await queueStatus(request({ action: "duration", minutes: 35 }, { cookie: barberCookie, "x-shop-id": main }));
+    expect(cookieMutation.status).toBe(200);
+    expect(mocks.update.mock.results.at(-1)?.value.eq).toHaveBeenCalledWith("id", barber);
+
+    const owner = await ownerLogin(request({ pin: "111111" }));
+    expect(owner.status).toBe(200);
+    expect(JSON.stringify(await owner.json())).not.toContain("111111");
+    const ownerCookie = owner.headers.get("set-cookie")?.split(";", 1)[0] ?? "";
+    const restoredOwner = await restoreSession(new Request("http://localhost/api/barbers/session", { headers: { cookie: ownerCookie } }));
+    expect(restoredOwner.status).toBe(200);
+    expect(await restoredOwner.json()).toEqual({ role: "owner", shopId: main, name: "Administrador" });
+    mocks.rpc.mockResolvedValueOnce({ data: { id: barber, name: "María" }, error: null });
+    expect((await register(request({ name: "María", pin: "123456" }, { cookie: ownerCookie }))).status).toBe(201);
+
+    const signedOut = await logout(new Request("http://localhost/api/barbers/session", { method: "DELETE", headers: { cookie: barberCookie } }));
+    expect(signedOut.status).toBe(200);
+    expect(signedOut.headers.get("set-cookie")).toMatch(/^barberqueue_session=;.*Max-Age=0.*HttpOnly/i);
+    expect((await restoreSession(new Request("http://localhost/api/barbers/session"))).status).toBe(401);
   });
   it("lets only the owner rename, reset the PIN and archive a barber", async () => {
     expect((await manage(request({ action: "update", shopId: barber, name: "Nuevo" }))).status).toBe(401);
