@@ -3,6 +3,8 @@ const mocks = vi.hoisted(() => {
   const listeners = new Map<string, (event: unknown) => void>();
   const socket = { ev: { on: vi.fn((name: string, callback: (event: unknown) => void) => listeners.set(name, callback)), removeAllListeners: vi.fn((name: string) => listeners.delete(name)) }, end: vi.fn(), sendMessage: vi.fn(), onWhatsApp: vi.fn() };
   const shopName = { value: "María" };
+  const pairing=vi.fn();
+  Object.assign(socket,{requestPairingCode:pairing});
   const activeStatus = { value: "waiting" as "waiting" | "serving" | null };
   const update = vi.fn();
   const eq = vi.fn();
@@ -17,7 +19,7 @@ const mocks = vi.hoisted(() => {
     if (table !== "queue_entries" && table !== "shops") throw new Error(`Unexpected table ${table}`);
     return query;
   });
-  return { listeners, socket, factory: vi.fn(() => socket), from, shopName, activeStatus, update, eq, inFilter, flush: vi.fn(), save: vi.fn(), delivery: vi.fn(), drain: vi.fn(async () => 0) };
+  return { pairing, listeners, socket, factory: vi.fn(() => socket), from, shopName, activeStatus, update, eq, inFilter, flush: vi.fn(), save: vi.fn(), delivery: vi.fn(), drain: vi.fn(async () => 0) };
 });
 vi.mock("./whatsapp-delivery", () => ({ recordWhatsAppDelivery: mocks.delivery }));
 vi.mock("./whatsapp-outbox", () => ({ drainWhatsAppOutbox: mocks.drain }));
@@ -35,8 +37,23 @@ beforeEach(() => {
 });
 afterEach(async () => { await stopWhatsApp(); });
 describe("WhatsApp socket lifecycle", () => {
-  it('refuses pairing requests while the socket is not ready', async()=>{
-    await expect(pairWhatsApp('pairing-shop','18095551234')).rejects.toThrow('aún se prepara');
+  it('waits for the QR event before requesting a code', async()=>{
+    mocks.pairing.mockResolvedValue('ABCDEFGH');
+    const result=pairWhatsApp('pairing-shop','18095551234');
+    await vi.waitFor(()=>expect(mocks.listeners.has('connection.update')).toBe(true));
+    expect(mocks.pairing).not.toHaveBeenCalled();
+    mocks.listeners.get('connection.update')?.({qr:'test'});
+    expect(await result).toBe('ABCDEFGH');
+    expect(await pairWhatsApp('pairing-shop','18095551234')).toBe('ABCDEFGH');
+    expect(mocks.pairing).toHaveBeenCalledTimes(1);
+  });
+  it('allows a retry when WhatsApp failed to generate the previous code',async()=>{
+    await startWhatsApp('retry-shop');
+    mocks.listeners.get('connection.update')?.({qr:'test'});
+    await vi.waitFor(()=>expect(whatsappStatus('retry-shop').status).toBe('qr'));
+    mocks.pairing.mockRejectedValueOnce(new Error('closed')).mockResolvedValueOnce('NEWCODE1');
+    await expect(pairWhatsApp('retry-shop','18095551234')).rejects.toThrow('no pudo generar');
+    expect(await pairWhatsApp('retry-shop','18095551234')).toBe('NEWCODE1');
   });
   it("confirms device delivery but not server acceptance and preserves retry message IDs", async () => {
     await startWhatsApp();

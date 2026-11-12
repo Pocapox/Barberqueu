@@ -19,6 +19,8 @@ type WAState = {
   socket?: WASocket;
   pairingUntil?: number;
   pairingBusy?: boolean;
+  pairingCode?: string;
+  pairingPhone?: string;
 };
 declare global {
   var __waStates: Map<string, WAState> | undefined;
@@ -38,13 +40,26 @@ export function connectedWhatsAppShops() { return [...states()].filter(([, s]) =
 export async function pairWhatsApp(shopId: string, phone: string) {
   const s = state(shopId);
   if (s.status === 'connected') throw new Error('WhatsApp ya está conectado.');
-  if (s.pairingBusy || (s.pairingUntil ?? 0)>Date.now()) throw new Error('Espera dos minutos antes de solicitar otro código.');
+  if (s.pairingBusy) throw new Error('Se está preparando un código. Espera unos segundos.');
+  if ((s.pairingUntil ?? 0)>Date.now()) {
+    if(s.pairingPhone===phone && s.pairingCode) return s.pairingCode;
+    throw new Error('Espera a que venza el código anterior antes de cambiar el número.');
+  }
   s.pairingBusy=true;
   try {
     await startWhatsApp(shopId);
+    const deadline=Date.now()+10000;
+    while(s.status==='connecting' && Date.now()<deadline) await new Promise(resolve=>setTimeout(resolve,100));
     if (!s.socket || s.status !== 'qr') throw new Error('La conexión aún se prepara. Intenta de nuevo en unos segundos.');
-    s.pairingUntil=Date.now()+120000;
-    const code=await s.socket.requestPairingCode(phone);
+    const socket=s.socket;
+    let code:string;
+    try {code=await socket.requestPairingCode(phone);}
+    catch(error){
+      console.warn('WhatsApp pairing request failed:',shopId,(error as {output?:{statusCode?:number}})?.output?.statusCode ?? 'unknown');
+      throw new Error('WhatsApp no pudo generar el código. Espera unos segundos e inténtalo de nuevo.');
+    }
+    if(s.socket!==socket)throw new Error('La conexión se reinició. Solicita otro código.');
+    s.pairingUntil=Date.now()+120000;s.pairingCode=code;s.pairingPhone=phone;
     return code;
   } finally { s.pairingBusy=false; }
 }
@@ -75,6 +90,7 @@ async function resolvePhone(s: WAState, socket: WASocket, shopId: string, jid: s
 }
 
 function detach(s: WAState) {
+  s.pairingUntil=undefined;s.pairingCode=undefined;s.pairingPhone=undefined;
   const socket = s.socket;
   s.socket = undefined;
   if (socket) {
