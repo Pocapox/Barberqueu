@@ -126,13 +126,13 @@ export default function PublicPage() {
     const values = new FormData(form);
     setBusy(true); setMessage("");
     try {
-      const response = await fetch("/api/queue/join", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: values.get("name"), phone: values.get("phone"), shopId }) });
+      const response = await fetch("/api/queue/join", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: values.get("name"), phone: values.get("phone"), shopId, whatsappConsent: values.get('whatsappConsent')==='on' }) });
       const data = await response.json(); if (!response.ok) throw new Error(data.error);
       const turn = { id: data.id, token: data.token, shopId }; setOwn(turn);
       try { localStorage.setItem(storageKey, JSON.stringify(turn)); }
       catch { setMessage("Turno registrado. Mantén esta pestaña abierta: el navegador no permite guardarlo."); }
       if (data.whatsappQueued) setMessage("Tu turno está registrado. El aviso de WhatsApp quedó pendiente y se enviará cuando haya conexión.");
-      else if (!data.whatsappDelivered) setMessage("Tu turno está registrado. Sigue esta página: WhatsApp no está disponible ahora.");
+      else setMessage("Tu turno está registrado. Puedes seguirlo aquí.");
       form.reset(); await refresh();
       // Prompt for app notifications if not yet determined
       if (getNotificationPermission() === "default") {
@@ -239,6 +239,7 @@ export default function PublicPage() {
             <label htmlFor="phone">Número de WhatsApp</label>
             <input id="phone" name="phone" type="tel" autoComplete="tel" placeholder="809 555 1234" required maxLength={40}/>
             <p className="input-help">Para otros países, incluye + y el código de país.</p>
+            <label style={{display:'flex',gap:10,alignItems:'flex-start'}}><input type="checkbox" name="whatsappConsent" style={{width:20,height:20}}/>Acepto recibir por WhatsApp la confirmación y los avisos de mi turno con este barbero. Puedo escribir PARAR para detenerlos o CANCELAR para cancelar mi turno.</label>
             <button className="button primary full" disabled={busy || !shop?.is_open || !restored || !!error}>{busy ? "Guardando tu lugar…" : shop && !shop.is_open ? "Fila cerrada" : "Tomar mi turno"}<ArrowUpRight size={20}/></button>
           </form>
           {notifState === "default" && (

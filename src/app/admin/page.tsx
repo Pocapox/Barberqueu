@@ -16,6 +16,8 @@ type ManagerSession = { role: "owner" | "barber"; shopId: string; name: string }
 const defaultShop = process.env.NEXT_PUBLIC_DEFAULT_SHOP_ID ?? "00000000-0000-0000-0000-000000000001";
 
 export default function AdminPage() {
+  const [pairPhone,setPairPhone]=useState('');
+  const [pairCode,setPairCode]=useState('');
   const [session, setSession] = useState<ManagerSession | null>(null);
   const [sessionChecked, setSessionChecked] = useState(false);
   const [barberName, setBarberName] = useState("");
@@ -37,6 +39,8 @@ export default function AdminPage() {
   const { shop, queue, refresh, error, live } = useQueue(activeShopId);
   const authenticated = session !== null;
   const owner = session?.role === "owner";
+  useEffect(()=>{setPairCode('');setPairPhone('');},[activeShopId]);
+  useEffect(()=>{if(wa.status==='connected')setPairCode('');},[wa.status]);
 
   const prevWaitingRef = useRef<Map<string, string> | null>(null);
 
@@ -398,6 +402,7 @@ export default function AdminPage() {
         </div>
 
         <aside className="whatsapp-panel">
+          {wa.status !== 'connected' && <form onSubmit={async event=>{event.preventDefault();if(busy)return;setBusy(true);setPairCode('');try{const response=await fetch('/api/whatsapp/pair',{method:'POST',headers:{'Content-Type':'application/json',...(owner?{'x-shop-id':activeShopId}:{})},body:JSON.stringify({phone:pairPhone})});const data=await response.json();if(!response.ok)throw new Error(data.error);setPairCode(data.code);}catch(error){setMessage(error instanceof Error?error.message:'No se pudo vincular.');}finally{setBusy(false);}}}><h3>Vincular con código</h3><label htmlFor="pair-phone">Tu número de WhatsApp</label><input id="pair-phone" type="tel" value={pairPhone} onChange={event=>{setPairPhone(event.target.value);setPairCode('');}} placeholder="809 555 1234" required maxLength={40}/><button className="button secondary full" disabled={busy}>Obtener código</button>{pairCode && <p className="notice">Código: <strong>{pairCode}</strong></p>}<p>Abre WhatsApp → Dispositivos vinculados → Vincular dispositivo → Vincular con número. Introduce el código y vuelve aquí. También puedes usar el QR de abajo.</p></form>}
           <div className="wa-heading"><MessageCircle size={25}/><h2>WhatsApp de {shop?.barber_name ?? barberName ?? "este barbero"}</h2></div>
           <span className={`connection-label ${wa.status === "connected" ? "connected" : ""}`}><span className={`dot ${wa.status === "connected" ? "green" : ""}`}/>{wa.status === "connected" ? "Conectado" : wa.status === "qr" ? "Listo para vincular" : wa.status === "error" ? "Conexión no disponible" : "Conectando…"}</span>
           {wa.qr ? <>

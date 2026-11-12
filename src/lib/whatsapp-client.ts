@@ -17,6 +17,8 @@ type WAState = {
   flush?: () => Promise<void>;
   lidPhones: Map<string, string>;
   socket?: WASocket;
+  pairingUntil?: number;
+  pairingBusy?: boolean;
 };
 declare global {
   var __waStates: Map<string, WAState> | undefined;
@@ -33,6 +35,19 @@ const state = (shopId = defaultShopId()): WAState => {
 export const defaultShopId = () => process.env.NEXT_PUBLIC_DEFAULT_SHOP_ID ?? "00000000-0000-0000-0000-000000000001";
 export function whatsappStatus(shopId = defaultShopId()) { const s = state(shopId); return { status: s.status, qr: s.qr }; }
 export function connectedWhatsAppShops() { return [...states()].filter(([, s]) => s.status === "connected").map(([id]) => id); }
+export async function pairWhatsApp(shopId: string, phone: string) {
+  const s = state(shopId);
+  if (s.status === 'connected') throw new Error('WhatsApp ya está conectado.');
+  if (s.pairingBusy || (s.pairingUntil ?? 0)>Date.now()) throw new Error('Espera dos minutos antes de solicitar otro código.');
+  s.pairingBusy=true;
+  try {
+    await startWhatsApp(shopId);
+    if (!s.socket || s.status !== 'qr') throw new Error('La conexión aún se prepara. Intenta de nuevo en unos segundos.');
+    s.pairingUntil=Date.now()+120000;
+    const code=await s.socket.requestPairingCode(phone);
+    return code;
+  } finally { s.pairingBusy=false; }
+}
 function phoneFromJid(jid: string | null | undefined): string | undefined {
   return jid?.match(/^([1-9]\d{7,14})(?::\d+)?@s\.whatsapp\.net$/)?.[1];
 }
@@ -161,7 +176,8 @@ export async function startWhatsApp(shopId = defaultShopId()): Promise<void> {
             if (message.key.fromMe || !jid || !(jid.endsWith("@s.whatsapp.net") || jid.endsWith("@lid")) || message.message?.protocolMessage) continue;
             const content = normalizeMessageContent(message.message);
             const text = content?.conversation ?? content?.extendedTextMessage?.text;
-            if (!isCancelCommand(text)) continue;
+            const stop = text?.trim().toUpperCase() === 'PARAR';
+            if (!stop && !isCancelCommand(text)) continue;
             rememberPhone(s, jid, message.key.senderPn);
             const phone = await resolvePhone(s, socket, shopId, jid);
             if (!phone) {
@@ -169,6 +185,13 @@ export async function startWhatsApp(shopId = defaultShopId()): Promise<void> {
               continue;
             }
             const db = getSupabaseAdmin();
+            if (stop) {
+              const result=await db.from('queue_entries').update({whatsapp_consent:false}).eq('shop_id',shopId).eq('customer_phone',phone).in('status',['waiting','serving']);
+              if(result.error) throw result.error;
+              const pending=await db.from('whatsapp_outbox').update({status:'superseded',leased_until:null}).eq('shop_id',shopId).eq('phone',phone).in('status',['pending','sending']);
+              if(pending.error) throw pending.error;
+              continue;
+            }
             const { data: cancelled, error: cancelError } = await db.from("queue_entries")
               .update({ status: "cancelled" })
               .eq("shop_id", shopId).eq("customer_phone", phone)

@@ -12,6 +12,7 @@ export type Shop = {
 };
 
 export type QueueEntry = {
+  whatsapp_consent: boolean;
   cancel_token_hash: string | null;
   id: string;
   shop_id: string;
@@ -25,7 +26,7 @@ export type QueueEntry = {
   updated_at: string;
 };
 
-export type PublicQueueEntry = Omit<QueueEntry, "customer_phone" | "cancel_token_hash">;
+export type PublicQueueEntry = Omit<QueueEntry, "customer_phone" | "cancel_token_hash" | "whatsapp_consent">;
 export const PUBLIC_QUEUE_COLUMNS =
   "id,shop_id,customer_name,position,status,notified_turn,notified_upcoming,created_at,updated_at" as const;
 
@@ -103,6 +104,7 @@ export type Database = {
     };
     Views: { [_ in never]: never };
     Functions: {
+      join_queue_consent: { Args: { p_shop: string; p_name: string; p_phone: string; p_token_hash: string; p_consent: boolean }; Returns: QueueEntry };
       join_queue: { Args: { p_shop: string; p_name: string; p_phone: string; p_token_hash: string }; Returns: QueueEntry };
       advance_queue: { Args: { p_shop: string; p_expected_serving: string | null; p_expected_waiting: string | null; p_finish: string }; Returns: { serving: QueueEntry | null; upcoming: QueueEntry | null } };
       cancel_queue: { Args: { p_shop: string; p_id: string; p_token_hash: string }; Returns: undefined };

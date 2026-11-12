@@ -6,7 +6,7 @@ import { defaultShopId } from "@/lib/whatsapp-client";
 import { drainWhatsAppOutbox } from "@/lib/whatsapp-outbox";
 import { ApiError, body, handleError, json, limit } from "../../_shared";
 export const runtime = "nodejs";
-const schema = z.object({ name: z.string().trim().min(1, "Escribe tu nombre.").max(80), phone: z.string().max(40), shopId: z.guid().optional() });
+const schema = z.object({ name: z.string().trim().min(1, "Escribe tu nombre.").max(80), phone: z.string().max(40), shopId: z.guid().optional(), whatsappConsent: z.boolean().default(false) });
 export async function POST(request: Request) {
   try {
     const input = schema.parse(await body(request));
@@ -17,13 +17,14 @@ export async function POST(request: Request) {
     const token = randomBytes(32).toString("hex");
     const shopId = input.shopId ?? defaultShopId();
     const db = getSupabaseAdmin();
-    const { data, error } = await db.rpc("join_queue", {
+    const { data, error } = await db.rpc("join_queue_consent", {
       p_shop: shopId, p_name: input.name, p_phone: phone,
       p_token_hash: createHash("sha256").update(token).digest("hex"),
+      p_consent: input.whatsappConsent,
     });
     if (error) throw error;
     try { await drainWhatsAppOutbox(); }
     catch { console.error("El aviso de inscripción quedó pendiente para reintento."); }
-    return json({ id: data.id, token, shopId, whatsappDelivered: false, whatsappQueued: true }, 201);
+    return json({ id: data.id, token, shopId, whatsappDelivered: false, whatsappQueued: input.whatsappConsent }, 201);
   } catch (error) { return handleError(error); }
 }

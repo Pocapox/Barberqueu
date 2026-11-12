@@ -25,7 +25,7 @@ vi.mock("./baileys", () => ({ makeWASocket: mocks.factory, normalizeMessageConte
 vi.mock("./whatsapp-auth", () => ({ useSupabaseAuthState: async () => ({ state: {}, saveCreds: mocks.save, flush: mocks.flush }) }));
 vi.mock("./supabase-admin", () => ({ getSupabaseAdmin: () => ({ from: mocks.from }) }));
 vi.mock("qrcode", () => ({ toDataURL: async () => "data:image/png;base64,test" }));
-import { sendWhatsApp, startWhatsApp, stopWhatsApp, whatsappStatus } from "./whatsapp-client";
+import { sendWhatsApp, startWhatsApp, stopWhatsApp, whatsappStatus, pairWhatsApp } from "./whatsapp-client";
 
 beforeEach(() => {
   globalThis.__waStates = undefined;
@@ -35,6 +35,9 @@ beforeEach(() => {
 });
 afterEach(async () => { await stopWhatsApp(); });
 describe("WhatsApp socket lifecycle", () => {
+  it('refuses pairing requests while the socket is not ready', async()=>{
+    await expect(pairWhatsApp('pairing-shop','18095551234')).rejects.toThrow('aún se prepara');
+  });
   it("confirms device delivery but not server acceptance and preserves retry message IDs", async () => {
     await startWhatsApp();
     mocks.listeners.get("connection.update")?.({ connection: "open" });

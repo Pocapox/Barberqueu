@@ -24,11 +24,13 @@ afterEach(() => vi.unstubAllEnvs());
 describe("queue route contracts", () => {
   it("normalizes phones, hashes cancellation tokens and returns no private row", async () => {
     mocks.rpc.mockResolvedValue({ data: { id, customer_phone: "18095551234", cancel_token_hash: "private" }, error: null });
-    const response = await join(request({ name: "Ana", phone: "(809) 555-1234" }));
+    const response = await join(request({ name: "Ana", phone: "(809) 555-1234", whatsappConsent: true }));
     const result = await response.json();
     expect(response.status).toBe(201);
     expect(result).toEqual({ id, shopId: id, token: expect.stringMatching(/^[a-f0-9]{64}$/), whatsappDelivered: false, whatsappQueued: true });
     expect(mocks.rpc.mock.calls[0][1].p_phone).toBe("18095551234");
+    expect(mocks.rpc.mock.calls[0][0]).toBe('join_queue_consent');
+    expect(mocks.rpc.mock.calls[0][1].p_consent).toBe(true);
     expect(mocks.rpc.mock.calls[0][1].p_token_hash).not.toBe(result.token);
     expect(mocks.drain).toHaveBeenCalledOnce();
   });

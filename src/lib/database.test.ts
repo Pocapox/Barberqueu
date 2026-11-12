@@ -48,6 +48,25 @@ beforeEach(async () => {
     UPDATE public.shops SET barber_name='Barbero Principal', is_open=true, archived_at=NULL WHERE id='${shop}';`);
 });
 
+it('requires consent, limits pre-advice and does not resend accepted messages', async () => {
+  await db.exec('BEGIN');
+  try {
+    const migration=await readFile('supabase/migrations/010_whatsapp_controls.sql','utf8');
+    await db.exec(migration.replace(/^BEGIN;/,'').replace(/COMMIT;\s*$/,''));
+    await db.query('SELECT join_queue_consent($1,$2,$3,$4,false)',[shop,'Sin permiso','18095550001','a'.repeat(64)]);
+    expect((await db.query('SELECT * FROM whatsapp_outbox')).rows).toHaveLength(0);
+    await db.query('SELECT join_queue_consent($1,$2,$3,$4,true)',[shop,'Con permiso','18095550002','a'.repeat(64)]);
+    const rows=await db.query<{id:string;message_id:string}>('SELECT * FROM claim_whatsapp_deliveries($1,1)',[[shop]]);
+    expect(rows.rows).toHaveLength(1);
+    const item=rows.rows[0];
+    await db.query('SELECT finish_whatsapp_attempt($1,$2,true)',[item.id,item.message_id]);
+    expect((await db.query('SELECT * FROM claim_whatsapp_deliveries($1,1)',[[shop]])).rows).toHaveLength(0);
+    await db.query('INSERT INTO whatsapp_outbox(shop_id,entry_id,kind,phone,body) SELECT shop_id,entry_id,\'progress\',phone,body FROM whatsapp_outbox WHERE id=$1',[item.id]);
+    await db.query('INSERT INTO whatsapp_outbox(shop_id,entry_id,kind,phone,body) SELECT shop_id,entry_id,\'progress\',phone,body FROM whatsapp_outbox WHERE id=$1',[item.id]);
+    expect((await db.query("SELECT * FROM whatsapp_outbox WHERE kind='upcoming'")).rows).toHaveLength(1);
+  } finally {await db.exec('ROLLBACK');}
+});
+
 afterAll(async () => { await db?.close(); });
 
 describe("durable WhatsApp outbox", () => {
