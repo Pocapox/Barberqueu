@@ -1,6 +1,5 @@
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ rpc: vi.fn(), single: vi.fn(), order: vi.fn(), update: vi.fn(), saved: vi.fn() }));
-vi.mock("@/lib/whatsapp-client", () => ({ defaultShopId: () => "00000000-0000-0000-0000-000000000001" }));
 vi.mock("@/lib/supabase-admin", () => ({ getSupabaseAdmin: () => ({ rpc: mocks.rpc, from: () => ({
   select: () => ({ eq: () => ({ single: mocks.single, in: () => ({ order: mocks.order }) }) }),
   update: mocks.update,

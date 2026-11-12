@@ -1,4 +1,4 @@
-/** Returns international digits suitable for storage and WhatsApp JIDs. */
+/** Returns international digits suitable for storage. */
 export function normalizePhone(input: string, defaultCountryCode = "1"): string {
   if (!/^[1-9]\d{0,2}$/.test(defaultCountryCode)) {
     throw new Error("Código de país inválido.");

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { getSupabaseAdmin } from "@/lib/supabase-admin";
-import { defaultShopId } from "@/lib/whatsapp-client";
+import { defaultShopId } from "@/lib/shop";
 import { PUBLIC_QUEUE_COLUMNS } from "@/types/database";
 import { ApiError, body, handleError, json, limit, requireManager } from "../../_shared";
 export const runtime = "nodejs";

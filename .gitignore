@@ -7,3 +7,9 @@ coverage/
 !.env.example
 gemini-code-*
 dependency-audit.json
+backups/
+*.png
+.agents/
+skills-lock.json
+graphify-out/
+presentation-assets/

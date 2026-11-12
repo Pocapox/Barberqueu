@@ -152,7 +152,6 @@ footer { border-top: 1px solid #27272a; padding: 24px 0; margin-top: 60px; displ
 .admin-queue h2 { font-size: 19px; }
 .count { color: #fbbf24; background: #302a1b; padding: 3px 7px; font-size: 12px; border-radius: 5px; margin-left: 5px; }
 .skip-button { margin-left: auto; display: flex; gap: 6px; align-items: center; background: transparent; border: 1px solid #3f3f46; border-radius: 7px; color: #a1a1aa; padding: 8px; font-size: 10px; flex-shrink: 0; }
-.whatsapp-panel { padding: 26px; background: #18181b; border: 1px solid #303034; border-radius: 18px; }
 .wa-heading { display: flex; align-items: center; gap: 10px; }
 .wa-heading svg { color: #4ade80; }
 .wa-heading h2 { font-size: 22px; }
@@ -160,7 +159,6 @@ footer { border-top: 1px solid #27272a; padding: 24px 0; margin-top: 60px; displ
 .connected { color: #86efac; }
 .qr-frame { background: white; padding: 10px; border-radius: 12px; margin: 22px 0; }
 .qr-frame img { display: block; width: 100%; height: auto; }
-.whatsapp-panel h3 { font-size: 15px; }
 .qr-steps { color: #a1a1aa; font-size: 12px; padding-left: 20px; line-height: 2; }
 .wa-empty { text-align: center; padding: 35px 0 15px; }
 .wa-empty svg { color: #52525b; margin: 0 auto 20px; }
@@ -319,3 +317,10 @@ footer { border-top: 1px solid #27272a; padding: 24px 0; margin-top: 60px; displ
   background: var(--color-amber-400);
   color: var(--color-zinc-950);
 }
+
+.install-guide,.share-guide,.push-control {padding:24px;border:1px solid #3f3f46;border-radius:18px;background:#18181b;margin:20px 0;}
+.install-guide img {width:100%;height:auto;max-width:420px;display:block;margin:16px auto;}
+.install-guide p,.share-guide p,.push-control p{color:#a1a1aa;line-height:1.6;}
+.share-guide small,.push-control small{display:block;color:#a1a1aa;margin-top:12px;}
+.share-guide a{overflow-wrap:anywhere;}
+.share-guide select{margin:12px 0;}

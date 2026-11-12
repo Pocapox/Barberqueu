@@ -12,7 +12,6 @@ export type Shop = {
 };
 
 export type QueueEntry = {
-  whatsapp_consent: boolean;
   cancel_token_hash: string | null;
   id: string;
   shop_id: string;
@@ -26,23 +25,9 @@ export type QueueEntry = {
   updated_at: string;
 };
 
-export type PublicQueueEntry = Omit<QueueEntry, "customer_phone" | "cancel_token_hash" | "whatsapp_consent">;
+export type PublicQueueEntry = Omit<QueueEntry, "customer_phone" | "cancel_token_hash">;
 export const PUBLIC_QUEUE_COLUMNS =
   "id,shop_id,customer_name,position,status,notified_turn,notified_upcoming,created_at,updated_at" as const;
-
-export type WhatsAppSession = {
-  shop_id: string;
-  key_id: string;
-  data: string;
-  updated_at: string;
-};
-
-export type WhatsAppOutbox = {
-  id: string; shop_id: string; entry_id: string; kind: "welcome" | "chair" | "progress" | "upcoming";
-  phone: string; body: string; status: "pending" | "sending" | "sent" | "superseded";
-  attempts: number; next_attempt_at: string; leased_until: string | null; sent_at: string | null; created_at: string;
-  message_id: string | null; delivered_at: string | null;
-};
 
 export type BarberAccount = {
   shop_id: string;
@@ -53,9 +38,14 @@ export type BarberAccount = {
   created_at: string;
 };
 
+export type PushSubscriptionRow = { id: string; shop_id: string; entry_id: string | null; endpoint: string; p256dh: string; auth: string; expires_at: string };
+export type PushJob = { id: string; subscription_id: string; entry_id: string; kind: 'serving'|'upcoming'|'joined'|'cancelled'; title: string; body: string; url: string; status: 'pending'|'sending'|'sent'|'expired'; attempts: number; next_attempt_at: string; expires_at: string };
+
 export type Database = {
   public: {
     Tables: {
+      push_subscriptions: { Row: PushSubscriptionRow; Insert: Omit<PushSubscriptionRow,'id'> & {id?:string}; Update: Partial<PushSubscriptionRow>; Relationships: [] };
+      push_jobs: { Row: PushJob; Insert: Partial<PushJob> & Pick<PushJob,'subscription_id'|'entry_id'|'kind'|'title'|'body'|'url'>; Update: Partial<PushJob>; Relationships: [] };
       shops: {
         Row: Shop;
         Insert: Pick<Shop, "slug" | "name" | "barber_name"> &
@@ -77,24 +67,6 @@ export type Database = {
           referencedColumns: ["id"];
         }];
       };
-      whatsapp_sessions: {
-        Row: WhatsAppSession;
-        Insert: Omit<WhatsAppSession, "updated_at"> & { updated_at?: string };
-        Update: Partial<WhatsAppSession>;
-        Relationships: [{
-          foreignKeyName: "whatsapp_sessions_shop_id_fkey";
-          columns: ["shop_id"];
-          isOneToOne: false;
-          referencedRelation: "shops";
-          referencedColumns: ["id"];
-        }];
-      };
-      whatsapp_outbox: {
-        Row: WhatsAppOutbox;
-        Insert: Pick<WhatsAppOutbox, "shop_id" | "entry_id" | "kind" | "phone" | "body"> & Partial<Omit<WhatsAppOutbox, "shop_id" | "entry_id" | "kind" | "phone" | "body">>;
-        Update: Partial<WhatsAppOutbox>;
-        Relationships: [];
-      };
       barber_accounts: {
         Row: BarberAccount;
         Insert: Pick<BarberAccount, "shop_id" | "name" | "pin_hash" | "pin_fingerprint"> & Partial<Pick<BarberAccount, "created_at">>;
@@ -104,7 +76,7 @@ export type Database = {
     };
     Views: { [_ in never]: never };
     Functions: {
-      join_queue_consent: { Args: { p_shop: string; p_name: string; p_phone: string; p_token_hash: string; p_consent: boolean }; Returns: QueueEntry };
+      claim_push_jobs: { Args: Record<string, never>; Returns: PushJob[] };
       join_queue: { Args: { p_shop: string; p_name: string; p_phone: string; p_token_hash: string }; Returns: QueueEntry };
       advance_queue: { Args: { p_shop: string; p_expected_serving: string | null; p_expected_waiting: string | null; p_finish: string }; Returns: { serving: QueueEntry | null; upcoming: QueueEntry | null } };
       cancel_queue: { Args: { p_shop: string; p_id: string; p_token_hash: string }; Returns: undefined };
@@ -115,11 +87,6 @@ export type Database = {
       update_barber_account: { Args: { p_shop: string; p_name: string; p_pin_hash: string | null; p_pin_fingerprint: string | null }; Returns: { id: string; name: string } };
       archive_barber_account: { Args: { p_shop: string; p_primary_shop: string }; Returns: undefined };
       cancel_queue_phone_details: { Args: { p_phone: string }; Returns: string[] };
-      claim_whatsapp_outbox: { Args: { p_limit?: number }; Returns: WhatsAppOutbox[] };
-      finish_whatsapp_outbox: { Args: { p_id: string; p_success: boolean }; Returns: undefined };
-      claim_whatsapp_deliveries: { Args: { p_shops: string[]; p_limit?: number }; Returns: WhatsAppOutbox[] };
-      finish_whatsapp_attempt: { Args: { p_id: string; p_message_id: string; p_success: boolean }; Returns: undefined };
-      confirm_whatsapp_delivery: { Args: { p_shop: string; p_message_id: string }; Returns: undefined };
     };
     Enums: { [_ in never]: never };
     CompositeTypes: { [_ in never]: never };

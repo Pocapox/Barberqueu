@@ -1,16 +1,16 @@
 # BarberQueue — Documento de Handoff
 
 > **Última actualización:** 11 de Noviembre de 2026  
-> **Estado del proyecto:** En producción y operativo  
+> **Estado del proyecto:** En producción y operativo (Migrado a App-Only / Web Push)  
 > **Rama principal:** `master` en [GitHub Pocapox/Barberqueu](https://github.com/Pocapox/Barberqueu)  
 > **Despliegue activo:** [barberqueu.onrender.com](https://barberqueu.onrender.com/)  
-> **Tests:** 134/134 pruebas aprobadas (`npm test`)
+> **Tests:** 126/126 pruebas aprobadas (`npm test`)
 
 ---
 
 ## 1. Resumen del Proyecto
 
-**BarberQueue** es una plataforma de gestión de turnos y filas virtuales en tiempo real para barberías. Permite a los clientes tomar turno y seguir la fila desde su teléfono (web o PWA instalada) recibiendo notificaciones tanto por WhatsApp como por la propia aplicación web. A los barberos les permite gestionar su fila, llamar turnos con "1-Tap", configurar tiempos de corte y recibir alertas sonoras y visuales cuando un cliente se anota o cancela.
+**BarberQueue** es una plataforma de gestión de turnos y filas virtuales en tiempo real para barberías. Permite a los clientes tomar turno y seguir la fila desde su teléfono (web o PWA instalada) recibiendo notificaciones en vivo y Web Push directo en su dispositivo. A los barberos les permite gestionar su fila, llamar turnos con "1-Tap", configurar tiempos de corte y compartir su enlace junto con guías visuales de instalación para Android e iOS.
 
 ---
 
@@ -21,41 +21,34 @@
 * **Estilos:** Tailwind CSS v4 + estilos personalizados en [`src/app/globals.css`](./src/app/globals.css).
 * **Sincronización en vivo:** Supabase Realtime (`postgres_changes` en `queue_entries` y `shops`) a través del hook [`useQueue`](./src/lib/use-queue.ts).
 * **PWA Instalable:** Manifiesto web en [`src/app/manifest.ts`](./src/app/manifest.ts), soporte offline en [`public/offline.html`](./public/offline.html) y Service Worker en [`public/sw.js`](./public/sw.js).
-* **Notificaciones de la App:** Módulo [`src/lib/notifications.ts`](./src/lib/notifications.ts) con solicitud de permisos del navegador, síntesis de audio nativa con Web Audio API (chime/alerta) y vibración sin dependencias externas. Al pulsar la notificación, el Service Worker enfoca la app.
+* **Notificaciones Web Push:** Suscripción del dispositivo con claves VAPID mediante [`src/app/push-control.tsx`](./src/app/push-control.tsx) y [`src/lib/push-client.ts`](./src/lib/push-client.ts). Los clientes reciben avisos al aproximarse su turno y al ser llamados al sillón; los barberos reciben alertas cuando un cliente se une o cancela.
+* **Guía de Instalación:** Componente [`src/app/install-guide.tsx`](./src/app/install-guide.tsx) y generación dinámica de tarjetas gráficas en [`/api/install-card`](./src/app/api/install-card/route.ts) para facilitar que los clientes instalen la app en Android y iPhone.
 
 ### Backend & API
 * **Base de datos:** Supabase PostgreSQL con RLS y migraciones en [`supabase/migrations/`](./supabase/migrations/).
-* **WhatsApp Engine (Baileys):** Conexión vía WebSocket con Baileys ([`src/lib/whatsapp-client.ts`](./src/lib/whatsapp-client.ts)).
-  * **Sin almacenamiento efímero local:** Credenciales serializadas y guardadas en la tabla `whatsapp_sessions` de Supabase.
-  * **Multi-barbero:** Cada barbero vincula su propio WhatsApp con un socket independiente.
-  * **Comando CANCELAR:** Procesamiento bidireccional de cancelaciones por mensaje de texto.
-  * **Outbox Durable:** Cola de mensajes en base de datos para reintentar avisos si WhatsApp se desconecta temporalmente.
+* **Web Push Worker:** En [`src/lib/push-worker.ts`](./src/lib/push-worker.ts) se procesan los trabajos encolados (`push_jobs`) cada 5 segundos con reintentos y caducidad automática de avisos obsoletos.
+* **Desacople total de WhatsApp:** Se eliminó la automatización y dependencias de Baileys por inestabilidad de conexiones en hosting efímero. La comunicación ahora se realiza 100% a través de la aplicación instalable y notificaciones del sistema operativo.
 * **Autenticación del Barbero:** Cookies HTTP-Only de 12 horas ([`src/app/api/barbers/session/route.ts`](./src/app/api/barbers/session/route.ts)) con PIN hasheado en base de datos.
-* **Keep-Alive:** Endpoint [`/api/health`](./src/app/api/health/route.ts) monitoreado mediante cron-job.org para evitar que la instancia gratuita de Render se duerma.
+* **Copia de seguridad:** Todo el código y datos previos a la eliminación de WhatsApp están archivados de forma privada en `backups/pre-app-only-20261111/`.
 
 ---
 
 ## 3. Registro de Cambios Recientes
 
+### `APP-ONLY RELEASE` — Desacople de WhatsApp y Notificaciones Web Push (11-Nov-2026)
+* **Eliminación de WhatsApp:** Se retiraron Baileys, qrcode, pino y endpoints `/api/whatsapp/*`.
+* **Notificaciones Push VAPID:** Suscripción nativa de dispositivos y worker de entregas en segundo plano (`push_jobs` y `push_subscriptions`).
+* **Tarjetas e Instrucciones de Instalación:** Compartir enlace con imagen explicativa para instalar la PWA en Android y iPhone.
+* **Cancelación en el sillón:** El cliente puede cancelar su turno directamente desde la app en cualquier momento.
+* **Migración SQL 011:** Preparada en [`supabase/migrations/011_app_notifications.sql`](./supabase/migrations/011_app_notifications.sql) para retirar tablas de WhatsApp y habilitar colas de Web Push.
+* **Respaldo previo:** Instantánea de seguridad generada en `backups/pre-app-only-20261111/`.
+
 ### `b21bd11` — Notificaciones nativas en la app y permisos (11-Nov-2026)
-* **Permisos:** Solicitud de permisos en la vista pública (cliente) y panel de control (barbero).
-* **Alertas del Cliente:** Aviso sonoro y en pantalla cuando pasa al sillón (`serving`), cuando es el próximo (`notified_upcoming`) y cuando la fila avanza.
-* **Alertas del Barbero:** Alerta sonora y notificación cuando un nuevo cliente se suma a la fila o cuando alguien cancela.
-* **Service Worker:** Enfoque automático de la ventana al hacer clic en la notificación.
-* **Tests:** Cobertura de pruebas agregada en [`src/lib/notifications.test.ts`](./src/lib/notifications.test.ts).
+* Solicitud de permisos en la vista pública (cliente) y panel de control (barbero).
+* Alertas sonoras y visuales locales en el dispositivo.
 
 ### `0dd525e` — Web App Instalable (PWA) (10-Nov-2026)
-* Configuración de manifiesto con display standalone y orientación vertical.
-* Pantalla de contingencia offline y cacheo de Service Worker.
-* Íconos PWA de 192x192 y 512x512 adaptados para Android e iOS.
-
-### `1d7712d` — Persistencia de sesión de barberos (10-Nov-2026)
-* Implementación de sesión mediante cookies cifradas/firmadas que duran 12 horas.
-* Evita el cierre de sesión al recargar la pestaña o abrirla nuevamente.
-
-### `4d5d7d4` — Recibos de entrega de WhatsApp y outbox duradero (10-Nov-2026)
-* Confirmación real de entrega de Baileys (`delivery receipts`) antes de marcar un mensaje como enviado.
-* Reintentos automáticos tras reconexiones.
+* Manifiesto standalone, pantalla offline e íconos para Android e iOS.
 
 ---
 
@@ -83,13 +76,15 @@ npm run dev
 * `NEXT_PUBLIC_SUPABASE_ANON_KEY`: Llave anónima pública de Supabase.
 * `SUPABASE_SERVICE_ROLE_KEY`: Llave privada con permisos administrativos (solo servidor).
 * `NEXT_PUBLIC_DEFAULT_SHOP_ID`: UUID de la barbería/fila por defecto (`00000000-0000-0000-0000-000000000001`).
-* `NEXT_PUBLIC_DEFAULT_COUNTRY_CODE`: Código de país por defecto (ej. `1` para República Dominicana / USA).
+* `NEXT_PUBLIC_DEFAULT_COUNTRY_CODE`: Código de país por defecto (ej. `1`).
 * `ADMIN_PIN`: PIN maestro del dueño de la barbería.
-* `PORT`: Puerto del servidor (ej. `3001` local / asignado por Render en producción).
+* `VAPID_PUBLIC_KEY`: Clave pública VAPID para suscripción de notificaciones Web Push.
+* `VAPID_PRIVATE_KEY`: Clave privada VAPID para firma de notificaciones desde el servidor.
+* `VAPID_SUBJECT`: Identificador / URL base para VAPID (`https://barberqueu.onrender.com`).
+* `PORT`: Puerto del servidor (`3001` local / asignado por Render en producción).
 
 ---
 
-## 6. Siguientes Pasos Sugeridos / Backlog
-1. **Web Push con VAPID (opcional):** Si se desea recibir notificaciones incluso con el navegador y la PWA totalmente cerrados en segundo plano profundo.
-2. **Personalización del perfil del barbero:** Permitir subir foto de perfil o logo de la barbería.
-3. **Métricas de atención:** Estadísticas de cortes diarios, tiempo promedio real por corte y horas pico en el panel del administrador.
+## 6. Siguientes Pasos
+1. **Aplicar migración 011 en Supabase:** Ejecutar [`supabase/migrations/011_app_notifications.sql`](./supabase/migrations/011_app_notifications.sql) en el SQL Editor del panel de Supabase.
+2. **Pruebas en dispositivos reales:** Probar instalación y recepción de notificaciones en Android (Chrome) e iPhone (Safari -> Compartir -> Añadir a pantalla de inicio).

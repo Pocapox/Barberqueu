@@ -4,7 +4,7 @@ import { AppSetup } from "./pwa-setup";
 
 export const metadata: Metadata = {
   title: "BarberQueue — Tu turno, sin esperar de más",
-  description: "Toma tu turno, sigue la fila en vivo y recibe tu aviso por WhatsApp.",
+  description: "Toma tu turno, sigue la fila en vivo y activa los avisos de la app.",
   robots: { index: false, follow: false },
   manifest: "/manifest.webmanifest",
   appleWebApp: { capable: true, title: "BarberQueue", statusBarStyle: "black-translucent" },

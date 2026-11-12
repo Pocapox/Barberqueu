@@ -1,23 +1,16 @@
 "use client";
 import Link from "next/link";
-import { useEffect, useState, useRef, type FormEvent } from "react";
-import { ArrowLeft, ArrowRight, Bell, BellOff, BellRing, Check, Clock3, LockKeyhole, LogOut, MessageCircle, Pencil, Scissors, SkipForward, Trash2, Users } from "lucide-react";
+import { InstallGuide, ShareQueue } from "@/app/install-guide";
+import { useEffect, useState, type FormEvent } from "react";
+import { ArrowLeft, ArrowRight, Check, Clock3, LockKeyhole, LogOut, Pencil, Scissors, SkipForward, Trash2, Users } from "lucide-react";
 import { useQueue } from "@/lib/use-queue";
-import {
-  getNotificationPermission,
-  requestNotificationPermission,
-  sendAppNotification,
-  type NotificationPermissionState,
-} from "@/lib/notifications";
+import { PushControl } from "@/app/push-control";
 
-type WAStatus = { status: string; qr: string | null };
 type BarberChoice = { id: string; barber_name: string; is_open: boolean; registered: boolean };
 type ManagerSession = { role: "owner" | "barber"; shopId: string; name: string };
 const defaultShop = process.env.NEXT_PUBLIC_DEFAULT_SHOP_ID ?? "00000000-0000-0000-0000-000000000001";
 
 export default function AdminPage() {
-  const [pairPhone,setPairPhone]=useState('');
-  const [pairCode,setPairCode]=useState('');
   const [session, setSession] = useState<ManagerSession | null>(null);
   const [sessionChecked, setSessionChecked] = useState(false);
   const [barberName, setBarberName] = useState("");
@@ -34,32 +27,11 @@ export default function AdminPage() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [durationDraft, setDurationDraft] = useState("");
-  const [wa, setWa] = useState<WAStatus>({ status: "disconnected", qr: null });
-  const [notifState, setNotifState] = useState<NotificationPermissionState>("default");
   const { shop, queue, refresh, error, live } = useQueue(activeShopId);
   const authenticated = session !== null;
   const owner = session?.role === "owner";
-  useEffect(()=>{setPairCode('');setPairPhone('');},[activeShopId]);
-  useEffect(()=>{if(wa.status==='connected')setPairCode('');},[wa.status]);
 
-  const prevWaitingRef = useRef<Map<string, string> | null>(null);
 
-  useEffect(() => {
-    setNotifState(getNotificationPermission());
-  }, []);
-
-  async function enableNotifications() {
-    const res = await requestNotificationPermission();
-    setNotifState(res);
-    if (res === "granted") {
-      void sendAppNotification("🔔 Alertas del barbero activadas", {
-        body: "Recibirás avisos sonoros y en pantalla cuando entren nuevos clientes o cancelen.",
-        sound: "alert",
-        url: "/admin",
-        tag: "admin-welcome",
-      });
-    }
-  }
 
   useEffect(() => {
     const controller = new AbortController();
@@ -84,66 +56,10 @@ export default function AdminPage() {
   const serving = queue.find(entry => entry.status === "serving");
   const waiting = queue.filter(entry => entry.status === "waiting");
 
-  // Real-time app notifications for the barber (new customers, cancellations)
-  useEffect(() => {
-    if (!authenticated) {
-      prevWaitingRef.current = null;
-      return;
-    }
 
-    const currentWaiting = new Map(waiting.map(e => [e.id, e.customer_name]));
-
-    if (prevWaitingRef.current === null) {
-      prevWaitingRef.current = currentWaiting;
-      return;
-    }
-
-    // 1. Detect newly joined waiting customers
-    for (const [id, name] of currentWaiting) {
-      if (!prevWaitingRef.current.has(id)) {
-        const entryIndex = waiting.findIndex(e => e.id === id);
-        void sendAppNotification("💈 Nuevo cliente en tu fila", {
-          body: `${name} se unió a la espera (#${entryIndex + 1}).`,
-          sound: "alert",
-          url: "/admin",
-          tag: `admin-new-${id}`,
-        });
-      }
-    }
-
-    // 2. Detect cancellations (client was waiting, now removed and not serving)
-    for (const [prevId, prevName] of prevWaitingRef.current) {
-      if (!currentWaiting.has(prevId) && serving?.id !== prevId) {
-        void sendAppNotification("⚠️ Turno cancelado", {
-          body: `${prevName} se retiró de la fila.`,
-          sound: "cancel",
-          url: "/admin",
-          tag: `admin-cancel-${prevId}`,
-        });
-      }
-    }
-
-    prevWaitingRef.current = currentWaiting;
-  }, [waiting, serving?.id, authenticated]);
 
   useEffect(() => { if (shop) setDurationDraft(String(shop.avg_cut_minutes)); }, [shop?.avg_cut_minutes]);
 
-  useEffect(() => {
-    if (!authenticated) return;
-    const controller = new AbortController(); let timer: ReturnType<typeof setTimeout>;
-    const poll = async () => {
-      try {
-        const response = await fetch("/api/whatsapp/status", { headers: owner ? { "x-shop-id": activeShopId } : {}, signal: controller.signal, cache: "no-store" });
-        const data = await response.json();
-        if (response.status === 401) { setSession(null); setMessage("La sesión expiró. Inicia sesión de nuevo."); return; }
-        if (!response.ok) throw new Error(data.error);
-        setWa(data);
-      } catch { if (!controller.signal.aborted) setWa({ status: "error", qr: null }); }
-      finally { if (!controller.signal.aborted) timer = setTimeout(() => void poll(), 3000); }
-    };
-    void poll();
-    return () => { controller.abort(); clearTimeout(timer); };
-  }, [owner, authenticated, activeShopId]);
 
   async function login(event: FormEvent) {
     event.preventDefault(); setBusy(true); setMessage("");
@@ -210,9 +126,16 @@ export default function AdminPage() {
   }
 
   async function logout() {
+    if ('serviceWorker' in navigator) {
+      try {
+        const registration = await navigator.serviceWorker.getRegistration();
+        const subscription = await registration?.pushManager.getSubscription();
+        if (subscription) await fetch('/api/push', {method:'DELETE',headers:{'Content-Type':'application/json','x-shop-id':activeShopId},body:JSON.stringify({endpoint:subscription.endpoint})});
+      } catch { /* Session logout must remain available if push is unavailable. */ }
+    }
     await fetch("/api/barbers/session", { method: "DELETE" }).catch(() => {});
     setSession(null); setBarberName(""); setActiveShopId(defaultShop);
-    setWa({ status: "disconnected", qr: null }); setMessage("");
+    setMessage("");
   }
 
   return <main className="shell admin-shell">
@@ -260,51 +183,9 @@ export default function AdminPage() {
         </button>
       </section>
 
-      {/* Control de Notificaciones para el Barbero */}
-      <div className="notif-barber-control">
-        {notifState === "default" && (
-          <div className="notif-banner">
-            <div className="notif-banner-text">
-              <Bell size={18} />
-              <div>
-                <strong>Alertas en tu pantalla y sonido del sillón</strong>
-                <p>Entérate al instante con sonido y notificación en pantalla cuando un cliente entre a tu fila o cancele.</p>
-              </div>
-            </div>
-            <button type="button" className="button primary sm" onClick={() => void enableNotifications()}>
-              <Bell size={15} /> Activar alertas
-            </button>
-          </div>
-        )}
-        {notifState === "granted" && (
-          <div className="notif-status-bar granted">
-            <BellRing size={15} />
-            <span>Alertas y sonido de clientes activos en este dispositivo</span>
-          </div>
-        )}
-        {notifState === "denied" && (
-          <div className="notif-status-bar denied">
-            <BellOff size={15} />
-            <span>Notificaciones bloqueadas en el navegador</span>
-          </div>
-        )}
-      </div>
+      <PushControl key={activeShopId} shopId={activeShopId} />
 
-      <div className="share-row">
-        <button type="button" className="button secondary" disabled={!shop} onClick={() => {
-          const url = new URL("/", window.location.origin);
-          if (["localhost", "127.0.0.1"].includes(url.hostname)) {
-            setMessage("El enlace local solo funciona en esta computadora. Para compartirlo con contactos, abre el sitio publicado.");
-            return;
-          }
-          url.searchParams.set("barber", activeShopId);
-          const text = `Toma tu turno con ${shop?.barber_name ?? barberName}: ${url.toString()}`;
-          window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank", "noopener,noreferrer");
-        }}>
-          <MessageCircle size={18}/>Enviar enlace a mis contactos
-        </button>
-        <span>Se abrirá WhatsApp para elegir a quién enviarlo.</span>
-      </div>
+      <ShareQueue shopId={activeShopId} name={shop?.barber_name ?? barberName} />
 
       {owner && (
         <section className="barber-management">
@@ -368,7 +249,7 @@ export default function AdminPage() {
             </div>
             <button className="button primary one-tap" disabled={busy || !!error || !shop || (!serving && !waiting.length)} onClick={() => void advance("completed")}>
               <Check size={28}/>
-              <span>{busy ? "Actualizando…" : serving ? "Terminar y llamar" : "Llamar al siguiente"}<small>{serving ? "Completa este corte y avisa a todos los que esperan" : "El primero pasa al sillón; el segundo se acerca"}</small></span>
+              <span>{busy ? "Actualizando…" : serving ? "Terminar y llamar" : "Llamar al siguiente"}<small>{serving ? "Completa este corte y actualiza la fila" : "El primero pasa al sillón; los dos siguientes se acercan"}</small></span>
               <ArrowRight size={24}/>
             </button>
             {serving && <button className="text-link no-show" disabled={busy || !!error} onClick={() => { if (window.confirm(`¿Marcar a ${serving.customer_name} como ausente y llamar al siguiente?`)) void advance("no_show"); }}><SkipForward size={16}/>No llegó · saltar turno actual</button>}
@@ -392,7 +273,7 @@ export default function AdminPage() {
               {waiting.map((entry, index) => (
                 <li key={entry.id}>
                   <span className="position">{String(index + 1).padStart(2, "0")}</span>
-                  <div><strong>{entry.customer_name}</strong><p>{entry.notified_upcoming ? "Pre-aviso enviado" : "Esperando su turno"}</p></div>
+                  <div><strong>{entry.customer_name}</strong><p>{index < 2 ? "Casi es su turno" : "Esperando su turno"}</p></div>
                   <button className="skip-button" disabled={busy || !!error} aria-label={`Marcar a ${entry.customer_name} como ausente`} onClick={() => { if (window.confirm(`¿Marcar a ${entry.customer_name} como ausente?`)) void action("status", { action: "skip", id: entry.id }); }}><SkipForward size={15}/>No-show</button>
                 </li>
               ))}
@@ -401,40 +282,7 @@ export default function AdminPage() {
           </section>
         </div>
 
-        <aside className="whatsapp-panel">
-          {wa.status !== 'connected' && <form onSubmit={async event=>{event.preventDefault();if(busy)return;setBusy(true);setPairCode('');try{const response=await fetch('/api/whatsapp/pair',{method:'POST',headers:{'Content-Type':'application/json',...(owner?{'x-shop-id':activeShopId}:{})},body:JSON.stringify({phone:pairPhone})});const data=await response.json();if(!response.ok)throw new Error(data.error);setPairCode(data.code);}catch(error){setMessage(error instanceof Error?error.message:'No se pudo vincular.');}finally{setBusy(false);}}}><h3>Vincular con código</h3><label htmlFor="pair-phone">Tu número de WhatsApp</label><input id="pair-phone" type="tel" value={pairPhone} onChange={event=>{setPairPhone(event.target.value);setPairCode('');}} placeholder="809 555 1234" required maxLength={40}/><button className="button secondary full" disabled={busy}>Obtener código</button>{pairCode && <p className="notice">Código: <strong>{pairCode}</strong></p>}<p>Abre WhatsApp → Dispositivos vinculados → Vincular dispositivo → Vincular con número. Introduce el código y vuelve aquí. También puedes usar el QR de abajo.</p></form>}
-          <div className="wa-heading"><MessageCircle size={25}/><h2>WhatsApp de {shop?.barber_name ?? barberName ?? "este barbero"}</h2></div>
-          <span className={`connection-label ${wa.status === "connected" ? "connected" : ""}`}><span className={`dot ${wa.status === "connected" ? "green" : ""}`}/>{wa.status === "connected" ? "Conectado" : wa.status === "qr" ? "Listo para vincular" : wa.status === "error" ? "Conexión no disponible" : "Conectando…"}</span>
-          {wa.qr ? <>
-            <div className="qr-frame"><img src={wa.qr} alt="Código QR para vincular WhatsApp con BarberQueue" width={260} height={260}/></div>
-            <h3>Vincula tu WhatsApp</h3>
-            <ol className="qr-steps">
-              <li>Abre WhatsApp en tu teléfono.</li>
-              <li>Ve a Dispositivos vinculados.</li>
-              <li>Toca Vincular un dispositivo y escanea.</li>
-            </ol>
-          </> : (
-            <div className="wa-empty">
-              <MessageCircle size={42}/>
-              <h3>{wa.status === "connected" ? "Los avisos están listos" : "Preparando la conexión"}</h3>
-              <p>{wa.status === "connected" ? "Al terminar un corte, cada cliente en espera recibe su nueva posición." : "El QR aparecerá aquí cuando el servicio esté disponible."}</p>
-            </div>
-          )}
-          <button type="button" className="button secondary full" disabled={busy} onClick={() => {
-            if (!window.confirm("¿Volver a vincular tu WhatsApp? Tendrás que escanear un QR nuevo con tu teléfono.")) return;
-            setBusy(true);
-            void fetch("/api/whatsapp/reset", { method: "POST", headers: owner ? { "x-shop-id": activeShopId } : {} })
-              .then(async response => {
-                const data = await response.json();
-                if (!response.ok) throw new Error(data.error);
-                setWa(data);
-                setMessage("Escanea el nuevo QR con tu teléfono.");
-              })
-              .catch(error => setMessage(error instanceof Error ? error.message : "No se pudo reiniciar WhatsApp."))
-              .finally(() => setBusy(false));
-          }}>Volver a vincular mi WhatsApp</button>
-          <div className="privacy"><LockKeyhole size={16}/><span>La sesión se conserva de forma privada. No necesitas volver a escanear en cada visita.</span></div>
-        </aside>
+        <InstallGuide />
       </div>
     </>}
     <footer><span>BarberQueue · Administración</span><span>Un toque. El siguiente.</span></footer>

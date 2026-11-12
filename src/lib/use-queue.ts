@@ -14,16 +14,17 @@ export function useQueue(shopId = process.env.NEXT_PUBLIC_DEFAULT_SHOP_ID ?? "00
   const refresh = useCallback(async () => {
     const request = ++sequence.current;
     try {
-      const response = await fetch(`/api/queue/status?shopId=${encodeURIComponent(shopId)}`, { cache: "no-store" });
+      const response = await fetch(`/api/queue/status?shopId=${encodeURIComponent(shopId)}`, { cache: "no-store", signal: AbortSignal.timeout(12000) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error);
       if (active.current && request === sequence.current) { setShop(data.shop); setQueue(data.queue); setError(""); }
     } catch (e) {
       if (active.current && request === sequence.current) setError(e instanceof Error ? e.message : "No pudimos cargar la fila.");
-    } finally { if (active.current) setLoading(false); }
+    } finally { if (active.current && request === sequence.current) setLoading(false); }
   }, [shopId]);
   useEffect(() => {
     active.current = true;
+    setLive(false);
     setLoading(true);
     setShop(null);
     setQueue([]);
@@ -32,6 +33,8 @@ export function useQueue(shopId = process.env.NEXT_PUBLIC_DEFAULT_SHOP_ID ?? "00
     const focus = () => { if (!document.hidden) void refresh(); };
     document.addEventListener("visibilitychange", focus);
     window.addEventListener("online", focus);
+    const offline = () => { setLive(false); setError('Sin conexión. Los datos pueden estar desactualizados.'); };
+    window.addEventListener('offline', offline);
     let cleanup = () => {};
     try {
       const client = getSupabaseClient();
@@ -41,7 +44,7 @@ export function useQueue(shopId = process.env.NEXT_PUBLIC_DEFAULT_SHOP_ID ?? "00
         .subscribe(status => { if (active.current) { setLive(status === "SUBSCRIBED"); if (status === "SUBSCRIBED") void refresh(); } });
       cleanup = () => { void client.removeChannel(channel); };
     } catch { setLive(false); }
-    return () => { active.current = false; sequence.current++; clearInterval(timer); cleanup(); document.removeEventListener("visibilitychange", focus); window.removeEventListener("online", focus); };
+    return () => { active.current = false; sequence.current++; clearInterval(timer); cleanup(); document.removeEventListener("visibilitychange", focus); window.removeEventListener("online", focus); window.removeEventListener('offline', offline); };
   }, [refresh]);
   return { shop, queue, error, loading, live, refresh };
 }

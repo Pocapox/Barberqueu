@@ -1,7 +1,5 @@
 import { z } from "zod";
 import { getSupabaseAdmin } from "@/lib/supabase-admin";
-import { drainWhatsAppOutbox } from "@/lib/whatsapp-outbox";
-import { whatsappStatus } from "@/lib/whatsapp-client";
 import { body, handleError, json, requireManager } from "../../_shared";
 
 export const runtime = "nodejs";
@@ -16,10 +14,6 @@ export async function POST(request: Request) {
       p_expected_waiting: input.waitingId, p_finish: input.finish,
     });
     if (error) throw error;
-    const warnings: string[] = [];
-    if (whatsappStatus(shopId).status !== "connected") warnings.push("WhatsApp está desconectado. Los avisos quedaron pendientes y se reintentará enviarlos.");
-    try { await drainWhatsAppOutbox(); }
-    catch { warnings.push("Los avisos quedaron pendientes para reintento."); }
-    return json({ ok: true, warnings });
+    return json({ ok: true });
   } catch (error) { return handleError(error); }
 }

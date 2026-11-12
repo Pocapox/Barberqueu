@@ -1,0 +1,16 @@
+import { beforeEach,afterEach,expect,it,vi } from 'vitest';
+const mocks=vi.hoisted(()=>({manager:vi.fn(),maybe:vi.fn(),insert:vi.fn(),update:vi.fn(),eq:vi.fn()}));
+vi.mock('@/lib/supabase-admin',()=>({getSupabaseAdmin:()=>({from:()=>({select:()=>({eq:mocks.eq}),upsert:mocks.insert,update:mocks.update})})}));
+vi.mock('../_shared',async importOriginal=>({...await importOriginal<object>(),requireManager:mocks.manager}));
+import {POST,GET} from './route';
+const shop='00000000-0000-0000-0000-000000000001';
+const input={shopId:shop,subscription:{endpoint:'https://fcm.googleapis.com/test',keys:{p256dh:'a'.repeat(87),auth:'b'.repeat(22)}}};
+const req=(value:unknown,origin='https://example.test')=>new Request('https://example.test/api/push',{method:'POST',headers:{'content-type':'application/json',origin},body:JSON.stringify(value)});
+beforeEach(()=>{vi.clearAllMocks();vi.stubEnv('VAPID_PRIVATE_KEY','private');vi.stubEnv('VAPID_PUBLIC_KEY','public');mocks.eq.mockReturnValue({eq:mocks.eq,in:()=>({maybeSingle:mocks.maybe}),is:()=>({maybeSingle:mocks.maybe}),maybeSingle:mocks.maybe});mocks.manager.mockResolvedValue({shopId:shop});mocks.maybe.mockResolvedValue({data:null,error:null});mocks.insert.mockResolvedValue({error:null});});
+afterEach(()=>vi.unstubAllEnvs());
+it('exposes only the public application key',async()=>expect(await GET().json()).toEqual({publicKey:'public',enabled:true}));
+it('rejects cross-origin subscriptions',async()=>expect((await POST(req(input,'https://evil.test'))).status).toBe(403));
+it('rejects a manager from another shop',async()=>{mocks.manager.mockResolvedValue({shopId:'other'});expect((await POST(req(input))).status).toBe(403);expect(mocks.insert).not.toHaveBeenCalled();});
+it('requires the private turn token',async()=>{expect((await POST(req({...input,entryId:shop}))).status).toBe(403);expect(mocks.insert).not.toHaveBeenCalled();});
+it('rejects an invalid or ended turn',async()=>expect((await POST(req({...input,entryId:shop,token:'c'.repeat(64)}))).status).toBe(403));
+it('registers an authorized manager subscription',async()=>{expect((await POST(req(input))).status).toBe(200);expect(mocks.insert).toHaveBeenCalledWith(expect.objectContaining({shop_id:shop,entry_id:null}),{onConflict:'endpoint,shop_id,entry_id'});});
