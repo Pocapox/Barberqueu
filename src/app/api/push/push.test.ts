@@ -10,6 +10,14 @@ beforeEach(()=>{vi.clearAllMocks();vi.stubEnv('VAPID_PRIVATE_KEY','private');vi.
 afterEach(()=>vi.unstubAllEnvs());
 it('exposes only the public application key',async()=>expect(await GET().json()).toEqual({publicKey:'public',enabled:true}));
 it('rejects cross-origin subscriptions',async()=>expect((await POST(req(input,'https://evil.test'))).status).toBe(403));
+it('accepts reverse-proxied same-origin subscriptions',async()=>{
+  const proxied=new Request('http://0.0.0.0:10000/api/push',{method:'POST',headers:{'content-type':'application/json',origin:'https://barberqueu.onrender.com','x-forwarded-proto':'https','x-forwarded-host':'barberqueu.onrender.com',host:'barberqueu.onrender.com'},body:JSON.stringify(input)});
+  expect((await POST(proxied)).status).toBe(200);
+});
+it('rejects missing origin header',async()=>{
+  const noOrigin=new Request('https://example.test/api/push',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(input)});
+  expect((await POST(noOrigin)).status).toBe(403);
+});
 it('rejects a manager from another shop',async()=>{mocks.manager.mockResolvedValue({shopId:'other'});expect((await POST(req(input))).status).toBe(403);expect(mocks.insert).not.toHaveBeenCalled();});
 it('requires the private turn token',async()=>{expect((await POST(req({...input,entryId:shop}))).status).toBe(403);expect(mocks.insert).not.toHaveBeenCalled();});
 it('rejects an invalid or ended turn',async()=>expect((await POST(req({...input,entryId:shop,token:'c'.repeat(64)}))).status).toBe(403));

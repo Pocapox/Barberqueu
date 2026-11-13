@@ -106,7 +106,7 @@ footer { border-top: 1px solid #27272a; padding: 24px 0; margin-top: 60px; displ
 .share-row span { color: #85858f; font-size: 11px; }
 .admin-intro p { font-size: 13px; }
 .shop-switch { display: flex; align-items: center; gap: 25px; background: #18181b; border: 1px solid #303034; border-radius: 12px; padding: 18px; text-align: left; }
-.barber-management { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; margin-bottom: 26px; padding: 26px; background: #18181b; border: 1px solid #303034; border-radius: 18px; }
+.barber-management { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; margin-top: 26px; padding: 26px; background: #18181b; border: 1px solid #303034; border-radius: 18px; }
 .barber-management h2 { font-size: 20px; }
 .barber-management h3 { font-size: 16px; }
 .barber-management p { font-size: 12px; margin: 8px 0 18px; }
@@ -127,6 +127,8 @@ footer { border-top: 1px solid #27272a; padding: 24px 0; margin-top: 60px; displ
 .switch-track.on { background: #fbbf24; justify-content: end; }
 .switch-track.on > span { background: #18181b; }
 .admin-grid { display: grid; grid-template-columns: 1.8fr 1fr; gap: 26px; align-items: start; }
+.admin-main, .admin-side { display: flex; flex-direction: column; gap: 25px; }
+.admin-side .install-guide, .admin-side .share-guide, .admin-side .push-control { margin: 0; }
 .control-panel { border: 1px solid #45402c; border-radius: 18px; padding: 27px; background: #191810; }
 .control-panel .section-heading { padding: 0 0 15px; color: #d4a937; }
 .control-panel .eyebrow { margin: 0; color: #d4a937; }
@@ -140,8 +142,8 @@ footer { border-top: 1px solid #27272a; padding: 24px 0; margin-top: 60px; displ
 .one-tap small { display: block; font-size: 10px; font-weight: 400; margin-top: 7px; }
 .one-tap svg { flex-shrink: 0; }
 .no-show { margin: 15px auto 0; display: flex; justify-content: center; font-size: 11px; }
-.admin-queue { margin-top: 25px; }
-.duration-panel { margin-top: 25px; padding: 24px 27px; background: #18181b; border: 1px solid #303034; border-radius: 18px; }
+.admin-queue { margin-top: 0; }
+.duration-panel { margin-top: 0; padding: 24px 27px; background: #18181b; border: 1px solid #303034; border-radius: 18px; }
 .duration-panel .section-heading { padding: 0; border: 0; }
 .duration-panel h2 { font-size: 19px; }
 .duration-panel p { font-size: 12px; margin: 8px 0 20px; }

@@ -183,9 +183,62 @@ export default function AdminPage() {
         </button>
       </section>
 
-      <PushControl key={activeShopId} shopId={activeShopId} />
+      {error && <p className="notice error" role="alert">{error}</p>}
+      {message && <p className="notice" role="status">{message}</p>}
 
-      <ShareQueue shopId={activeShopId} name={shop?.barber_name ?? barberName} />
+      <div className="admin-grid">
+        <div className="admin-main">
+          <section className="queue-panel admin-queue">
+            <div className="section-heading"><h2>En espera <span className="count">{waiting.length}</span></h2><Clock3 size={18}/></div>
+            <ol className="queue-list">
+              {waiting.map((entry, index) => (
+                <li key={entry.id}>
+                  <span className="position">{String(index + 1).padStart(2, "0")}</span>
+                  <div><strong>{entry.customer_name}</strong><p>{index < 2 ? "Casi es su turno" : "Esperando su turno"}</p></div>
+                  <button className="skip-button" disabled={busy || !!error} aria-label={`Marcar a ${entry.customer_name} como ausente`} onClick={() => { if (window.confirm(`¿Marcar a ${entry.customer_name} como ausente?`)) void action("status", { action: "skip", id: entry.id }); }}><SkipForward size={15}/>No-show</button>
+                </li>
+              ))}
+            </ol>
+            {!waiting.length && <div className="empty"><Users size={24}/><p>No hay clientes esperando.</p></div>}
+          </section>
+
+          <section className="control-panel">
+            <div className="section-heading"><p className="eyebrow">EN EL SILLÓN</p><Scissors size={20}/></div>
+            <h2>{serving?.customer_name ?? "Esperando al próximo"}</h2>
+            <p>{serving ? "Al terminar, llamaremos al siguiente y diremos a cada cliente cuántas personas le faltan." : "Comienza a atender al primero de la fila con un solo toque."}</p>
+            <div className="next-preview">
+              <div><span>01 · PASA AL SILLÓN</span><strong>{waiting[0]?.customer_name ?? "Sin clientes en espera"}</strong></div>
+              <div><span>02 · RECIBE PRE-AVISO</span><strong>{waiting[1]?.customer_name ?? "Sin segundo turno"}</strong></div>
+            </div>
+            <button className="button primary one-tap" disabled={busy || !!error || !shop || (!serving && !waiting.length)} onClick={() => void advance("completed")}>
+              <Check size={28}/>
+              <span>{busy ? "Actualizando…" : serving ? "Terminar y llamar" : "Llamar al siguiente"}<small>{serving ? "Completa este corte y actualiza la fila" : "El primero pasa al sillón; los dos siguientes se acercan"}</small></span>
+              <ArrowRight size={24}/>
+            </button>
+            {serving && <button className="text-link no-show" disabled={busy || !!error} onClick={() => { if (window.confirm(`¿Marcar a ${serving.customer_name} como ausente y llamar al siguiente?`)) void advance("no_show"); }}><SkipForward size={16}/>No llegó · saltar turno actual</button>}
+          </section>
+
+          <section className="duration-panel">
+            <div className="section-heading"><h2>Tiempo por corte</h2><Clock3 size={19}/></div>
+            <p>Elige cuántos minutos tardas aproximadamente por cliente. Usaremos este valor para mostrar la espera estimada.</p>
+            <form onSubmit={event => { event.preventDefault(); void action("status", { action: "duration", minutes: Number(durationDraft) }, "Tiempo estimado actualizado."); }}>
+              <label htmlFor="cut-minutes">Minutos aproximados</label>
+              <div className="duration-controls">
+                <input id="cut-minutes" type="number" inputMode="numeric" min="5" max="180" step="1" required value={durationDraft} onChange={event => setDurationDraft(event.target.value)}/>
+                <button className="button secondary" disabled={busy || !!error || !shop || Number(durationDraft) === shop.avg_cut_minutes}>Guardar tiempo</button>
+              </div>
+            </form>
+          </section>
+        </div>
+
+        <div className="admin-side">
+          <PushControl key={activeShopId} shopId={activeShopId} />
+
+          <ShareQueue shopId={activeShopId} name={shop?.barber_name ?? barberName} />
+
+          <InstallGuide />
+        </div>
+      </div>
 
       {owner && (
         <section className="barber-management">
@@ -233,57 +286,6 @@ export default function AdminPage() {
           </form>
         </section>
       )}
-
-      {error && <p className="notice error" role="alert">{error}</p>}
-      {message && <p className="notice" role="status">{message}</p>}
-
-      <div className="admin-grid">
-        <div>
-          <section className="control-panel">
-            <div className="section-heading"><p className="eyebrow">EN EL SILLÓN</p><Scissors size={20}/></div>
-            <h2>{serving?.customer_name ?? "Esperando al próximo"}</h2>
-            <p>{serving ? "Al terminar, llamaremos al siguiente y diremos a cada cliente cuántas personas le faltan." : "Comienza a atender al primero de la fila con un solo toque."}</p>
-            <div className="next-preview">
-              <div><span>01 · PASA AL SILLÓN</span><strong>{waiting[0]?.customer_name ?? "Sin clientes en espera"}</strong></div>
-              <div><span>02 · RECIBE PRE-AVISO</span><strong>{waiting[1]?.customer_name ?? "Sin segundo turno"}</strong></div>
-            </div>
-            <button className="button primary one-tap" disabled={busy || !!error || !shop || (!serving && !waiting.length)} onClick={() => void advance("completed")}>
-              <Check size={28}/>
-              <span>{busy ? "Actualizando…" : serving ? "Terminar y llamar" : "Llamar al siguiente"}<small>{serving ? "Completa este corte y actualiza la fila" : "El primero pasa al sillón; los dos siguientes se acercan"}</small></span>
-              <ArrowRight size={24}/>
-            </button>
-            {serving && <button className="text-link no-show" disabled={busy || !!error} onClick={() => { if (window.confirm(`¿Marcar a ${serving.customer_name} como ausente y llamar al siguiente?`)) void advance("no_show"); }}><SkipForward size={16}/>No llegó · saltar turno actual</button>}
-          </section>
-
-          <section className="duration-panel">
-            <div className="section-heading"><h2>Tiempo por corte</h2><Clock3 size={19}/></div>
-            <p>Elige cuántos minutos tardas aproximadamente por cliente. Usaremos este valor para mostrar la espera estimada.</p>
-            <form onSubmit={event => { event.preventDefault(); void action("status", { action: "duration", minutes: Number(durationDraft) }, "Tiempo estimado actualizado."); }}>
-              <label htmlFor="cut-minutes">Minutos aproximados</label>
-              <div className="duration-controls">
-                <input id="cut-minutes" type="number" inputMode="numeric" min="5" max="180" step="1" required value={durationDraft} onChange={event => setDurationDraft(event.target.value)}/>
-                <button className="button secondary" disabled={busy || !!error || !shop || Number(durationDraft) === shop.avg_cut_minutes}>Guardar tiempo</button>
-              </div>
-            </form>
-          </section>
-
-          <section className="queue-panel admin-queue">
-            <div className="section-heading"><h2>En espera <span className="count">{waiting.length}</span></h2><Clock3 size={18}/></div>
-            <ol className="queue-list">
-              {waiting.map((entry, index) => (
-                <li key={entry.id}>
-                  <span className="position">{String(index + 1).padStart(2, "0")}</span>
-                  <div><strong>{entry.customer_name}</strong><p>{index < 2 ? "Casi es su turno" : "Esperando su turno"}</p></div>
-                  <button className="skip-button" disabled={busy || !!error} aria-label={`Marcar a ${entry.customer_name} como ausente`} onClick={() => { if (window.confirm(`¿Marcar a ${entry.customer_name} como ausente?`)) void action("status", { action: "skip", id: entry.id }); }}><SkipForward size={15}/>No-show</button>
-                </li>
-              ))}
-            </ol>
-            {!waiting.length && <div className="empty"><Users size={24}/><p>No hay clientes esperando.</p></div>}
-          </section>
-        </div>
-
-        <InstallGuide />
-      </div>
     </>}
     <footer><span>BarberQueue · Administración</span><span>Un toque. El siguiente.</span></footer>
   </main>;
